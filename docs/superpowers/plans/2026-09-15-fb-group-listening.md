@@ -4,9 +4,11 @@
 
 **Goal:** CLI tool ที่เฝ้าดูโพสต์ใน Facebook Group (browser automation + บัญชีผู้ใช้เอง), บันทึกสะสมใน SQLite แล้วสร้าง Markdown digest "กระแสช่วงนี้เรื่องอะไร"
 
-**Architecture:** 4 modules แยกกันชัด: `fetch.py` (Playwright + parser, selector FB รวมจุดเดียว), `store.py` (SQLite dedupe/upsert), `digest.py` (thai2fit keyword + engagement → Markdown), `cli.py` (login / monitor / digest / capture). Data flow: login → monitor loop → SQLite → digest report.
+**Architecture:** 4 modules แยกกันชัด: `fetch.py` (Playwright + parser, selector FB รวมจุดเดียว), `store.py` (SQLite dedupe/upsert), `digest.py` (pythainlp keyword + engagement → Markdown), `cli.py` (login / monitor / digest / capture). Data flow: login → monitor loop → SQLite → digest report.
 
-**Tech Stack:** Python 3.12 (เครื่องนี้มี `python` = 3.12.1), Playwright (chromium, persistent context), SQLite (stdlib), thai2fit, pytest. ไม่เพิ่ม dependency อื่น
+**Tech Stack:** Python 3.12 (เครื่องนี้มี `python` = 3.12.1), Playwright (chromium, persistent context), SQLite (stdlib), pythainlp, pytest. ไม่เพิ่ม dependency อื่น
+
+> **Deviation (2026-09-15):** spec ระบุ `thai2fit` แต่แพ็กเกจนี้ไม่มีบน PyPI — ใช้ `pythainlp` (5.3.7, standard Thai NLP, `word_tokenize`) แทน
 
 **Spec:** `docs/superpowers/specs/2026-09-15-fb-group-listening-design.md`
 
@@ -14,7 +16,7 @@
 
 - Windows + PowerShell. Python ผ่าน `.venv\Scripts\python` หลังสร้าง venv
 - Python 3.11+ (ใช้ `tomllib` stdlib)
-- Dependencies เพิ่มได้แค่: `playwright`, `thai2fit`, `pytest`
+- Dependencies เพิ่มได้แค่: `playwright`, `pythainlp`, `pytest`
 - **Selector ของ Facebook DOM ทุกตัวต้องอยู่ใน `fetch.py` เท่านั้น** (แก้จุดเดียวจบเมื่อ DOM เปลี่ยน)
 - Parser ต้อง fail loudly — ห้าม parse แล้วได้ข้อมูลผิดแบบเงียบ
 - `data/` (db, browser profile, sample.html) = gitignore; `reports/` = commit
@@ -28,13 +30,13 @@
 - Create: `.gitignore`, `config.toml`, `tests/test_smoke.py`
 
 **Interfaces:**
-- Produces: venv ที่ import `playwright`, `thai2fit`, `pytest` ได้, `config.toml` ตาม spec §7
+- Produces: venv ที่ import `playwright`, `pythainlp`, `pytest` ได้, `config.toml` ตาม spec §7
 
 - [ ] **Step 1: สร้าง venv + ติดตั้ง deps**
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python -m pip install playwright thai2fit pytest
+    .venv\Scripts\python -m pip install playwright pythainlp pytest
 .venv\Scripts\python -m playwright install chromium
 ```
 
@@ -69,7 +71,7 @@ top_n_posts    = 10
 ```python
 def test_imports():
     import playwright  # noqa: F401
-    import thai2fit  # noqa: F401
+    import pythainlp  # noqa: F401
 ```
 
 Run: `.venv\Scripts\python -m pytest -v`
@@ -91,7 +93,7 @@ git commit -m "chore: scaffold venv, deps, config, smoke test"
 - Test: `tests/test_store.py`
 
 **Interfaces:**
-- Consumes: ничего (task แรกของ code จริง)
+- Consumes: ไม่มี (task แรกของ code จริง)
 - Produces:
   - `init_db(db_path: str | Path) -> sqlite3.Connection`
   - `upsert_posts(conn: sqlite3.Connection, group_id: str, posts: list[dict], fetched_at: str) -> int` — dict keys ของ post: `post_id, poster_name, body, created_at, reaction_count, comment_count, permalink`
@@ -875,7 +877,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-import thai2fit
+import pythainlp
 
 # ponytail: stopword list ตัดมือ ~50 คำ, ขยายถ้า keyword พัง — ไม่ใช้ library NLP
 STOPWORDS = set("""
@@ -887,9 +889,11 @@ it this that i you he she we they
 
 
 def _tokens(text: str) -> list[str]:
+    # ponytail: โทน/สระไทยที่ซ้อน (่ ้ ุ ู ี เ) เป็น Unicode Mn → isalnum() ทั้งคำ
+    # เป็น False; ตรวจทีละตัวด้วย any() แทน (ไม่งั้นคำไทยที่มีโทนถูกตัดทิ้งหมด)
     return [
-        t for t in thai2fit.split(text)
-        if t.isalnum() and len(t) > 1 and t.lower() not in STOPWORDS
+        t for t in pythainlp.word_tokenize(text)
+        if any(c.isalnum() for c in t) and len(t) > 1 and t.lower() not in STOPWORDS
     ]
 
 
@@ -1015,7 +1019,7 @@ Expected: ทุก test pass
 ## Setup
 
     python -m venv .venv
-    .venv\Scripts\python -m pip install playwright thai2fit pytest
+.venv\Scripts\python -m pip install playwright pythainlp pytest
     .venv\Scripts\python -m playwright install chromium
 
 ใส่ group URL ใน `config.toml`
@@ -1047,5 +1051,5 @@ git commit -m "docs: README; end-to-end verified"
 ## Self-Review (ทำแล้วตอนเขียน plan)
 
 - **Spec coverage:** §5 data model → Task 2; §6 CLI → Tasks 3/5/6; §7 config → Task 1; §8 digest → Task 6; §9 errors (session expired, retry, dedupe) → Tasks 2/5; §10 tests → Tasks 2/4/6; §11 phase 2 ไม่ทำ (out of scope ✓)
-- **Placeholder scan:** ไม่มี TBD/TODO — จุดเดียวที่ต้อง "ดูแล้วปรับ" คือ Step 5 Task 4 (calibrate กับ DOM จริง) ซึ่งเป็น workflow จริงของ parser กับเว็บที่ DOM เปลี่ยนบ่อย ไม่ใช่ช่องว่างใน plan; `_counts` ใน Task 3 Step 3 มีโค้ดตัวอย่างที่เจตนาวางไว้ให้อ่าน logic — implementer เขียนใหม่สะอาดตามหมายเหตุ (ระบุชัด)
+- **Placeholder scan:** ไม่มี TBD/TODO — จุดเดียวที่ต้อง "ดูแล้วปรับ" คือ Step 5 Task 4 (calibrate กับ DOM จริง) ซึ่งเป็น workflow จริงของ parser กับเว็บที่ DOM เปลี่ยนบ่อย ไม่ใช่ช่องว่างใน plan; โค้ด parser Task 4 ตรวจแล้ว — รัน test ของ plan เองผ่าน 4/4 (commit 4afc965)
 - **Type consistency:** `post dict` keys (post_id, poster_name, body, created_at, reaction_count, comment_count, permalink) ใช้ตรงกัน Task 2/4/6; `fetch_group_posts(group: dict, pages, headless)` ตรงกับ caller ใน cli; `fetch_recent(conn, group_id, since_iso)` ตรงกัน store test / cli

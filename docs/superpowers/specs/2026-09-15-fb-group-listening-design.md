@@ -18,7 +18,7 @@ Status: Approved (in chat, pending spec review)
 | สิ่งที่ต้องบันทึก | โพสต์หลัก: ชื่อผู้โพสต์, body, เวลา, จำนวน reaction, จำนวน comment, permalink — ยังไม่รวมถึงเนื้อหา comment |
 | ผลลัพธ์ | Markdown digest (รายวัน/รายสัปดาห์) |
 | จำนวนกลุ่ม | เริ่ม 1 กลุ่ม, config รองรับหลายกลุ่ม |
-| Tech stack | Python 3.11+, Playwright, SQLite, thai2fit — ไม่เพิ่ม dependency อื่นที่ไม่จำเป็น |
+| Tech stack | Python 3.11+, Playwright, SQLite, pythainlp — ไม่เพิ่ม dependency อื่นที่ไม่จำเป็น (spec เดิมระบุ thai2fit แต่ไม่มีบน PyPI) |
 
 ## 3. Architecture / Data Flow
 
@@ -36,7 +36,7 @@ login (1 ครั้ง, headed browser, บันทึก storage state)
 | `cli.py` | Entry point: `login` / `monitor [--once]` / `digest [--days N]` |
 | `fetch.py` | Playwright เปิดหน้ากลุ่ม, scroll, parse โพสต์ — **selector ของ FB รวมอยู่ใน dict เดียวในไฟล์นี้** (DOM FB เปลี่ยนบ่อย แก้จุดเดียวจบ) |
 | `store.py` | SQLite: schema, upsert, query ตามช่วงวัน, dedupe ด้วย post_id |
-| `digest.py` | thai2fit แยกคำไทย → top keywords, top posters, top posts โดย engagement → Markdown |
+| `digest.py` | pythainlp แยกคำไทย → top keywords, top posters, top posts โดย engagement → Markdown |
 | `config.toml` | ข้อมูลกลุ่ม, ระยะเวลารัน, ค่า digest |
 | `tests/` | Parser test (จาก HTML fixture), dedupe test, digest test |
 | `data/` | `sl.db`, `auth/` (storage state) — gitignore |
@@ -93,7 +93,7 @@ top_n_posts    = 10
 ## 8. Digest Content
 
 1. ช่วงเวลา + จำนวนโพสต์ทั้งหมดใน archive / ในช่วง
-2. Top keywords (thai2fit tokenization, ตัด stopword ไทย+อังกฤษ,
+2. Top keywords (pythainlp word_tokenize, ตัด stopword ไทย+อังกฤษ,
    แสดง count + % ต่อโพสต์)
 3. Top posters (โพสต์มากสุด)
 4. Top posts โดย engagement (reactions + comments) พร้อม permalink

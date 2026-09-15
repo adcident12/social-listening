@@ -1,0 +1,12 @@
+[[groups]]
+name = "กลุ่มเป้าหมาย"
+url  = "https://www.facebook.com/groups/REPLACE_WITH_GROUP_URL"
+
+[monitor]
+interval_minutes = 30
+pages_per_run    = 1
+headless         = true
+
+[digest]
+top_n_keywords = 15
+top_n_posts    = 10

@@ -236,6 +236,7 @@ git commit -m "feat: sqlite store with dedupe upsert and since-query"
   - `login(group_url: str, profile_dir: Path = PROFILE_DIR) -> None`
   - `capture_feed_html(group_url: str, profile_dir: Path = PROFILE_DIR, out_path: Path | None = None, pages: int = 1, headless: bool = True) -> str`
   - `PROFILE_DIR = Path("data/browser-profile")`
+  - `cli.py login [--group <url>]` — เปิด browser ให้ล็อกอิน (fetch.login มีแล้วใน task นี้)
   - `cli.py capture --group <url> --out <path>` — บันทึก feed HTML จริงให้ Task 4 ใช้ calibrate parser
 
 - [ ] **Step 1: เขียน browser functions ใน `fetch.py`**
@@ -316,21 +317,33 @@ import argparse
 import tomllib
 from pathlib import Path
 
-from fetch import capture_feed_html
+from fetch import capture_feed_html, login
 
 def _config() -> dict:
     with open("config.toml", "rb") as f:
         return tomllib.load(f)
 
+def cmd_login(cfg: dict, args) -> int:
+    url = args.group or cfg["groups"][0]["url"]
+    login(url)
+    print("login OK — profile saved to data/browser-profile")
+    return 0
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="social-listening")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    lg = sub.add_parser("login", help="open browser, log in, save profile")
+    lg.add_argument("--group", default=None)
 
     cap = sub.add_parser("capture", help="save raw feed HTML for parser debugging")
     cap.add_argument("--group", required=True)
     cap.add_argument("--out", default="data/sample.html")
 
     args = p.parse_args(argv)
+    cfg = _config()
+    if args.cmd == "login":
+        return cmd_login(cfg, args)
     if args.cmd == "capture":
         capture_feed_html(args.group, out_path=Path(args.out))
         print(f"saved {args.out}")

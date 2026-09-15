@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import time
 import tomllib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from digest import build_digest
 from fetch import SessionExpired, capture_feed_html, fetch_group_posts, group_id_from_url, login
-from store import init_db, upsert_posts
+from store import fetch_recent, init_db, upsert_posts
 
 DATA = Path("data")
 DB = DATA / "sl.db"
@@ -52,6 +53,20 @@ def cmd_monitor(cfg: dict, args) -> int:
             if args.once:
                 return 0
         time.sleep(mon["interval_minutes"] * 60)
+
+def cmd_digest(cfg: dict, args) -> int:
+    group = cfg["groups"][0]
+    conn = init_db(DB)
+    since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
+    rows = fetch_recent(conn, group_id_from_url(group["url"]), since)
+    d = cfg["digest"]
+    md = build_digest(rows, args.days, d["top_n_keywords"], d["top_n_posts"])
+    out = Path("reports") / f"{group['name']}-{datetime.now():%Y-%m-%d}.md"
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(md, encoding="utf-8")
+    print(md)
+    print(f"\nsaved {out}")
+    return 0
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="social-listening")

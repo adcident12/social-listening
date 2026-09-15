@@ -62,3 +62,196 @@ def capture_feed_html(group_url: str, profile_dir: Path = PROFILE_DIR,
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(html, encoding="utf-8")
     return html
+
+import hashlib
+from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
+
+# เลือกตั้ง DOM ของ FB เปลี่ยน — แก้ dict นี้จุดเดียวจบ
+SELECTORS = {
+    "post": ("div", {"role": "article"}),
+}
+
+POST_ARIA_RE = re.compile(
+    r"(?:Posted by|โพสต์โดย)\s+(.+?)\s+(?:in|ใน)\s+(.+?)(?:[,.]|\s*$)", re.S)
+
+# อังกฤษ: เลขอยู่ก่อนคำ ("12 reactions") / ไทย: คำอยู่ก่อนเลข ("ปฏิกิริยา 5")
+# แยก regex ตามภาษา — ถ้าใช้ pattern เดียว เลขตรงกลางจะสลับข้างได้
+COUNT_BEFORE_RE = re.compile(r"(\d[\d,.]*)(K|M)?\s*(reactions?|comments?|shares?)", re.I)
+COUNT_AFTER_RE = re.compile(r"(ปฏิกิริยา|ความคิดเห็น|แชร์)\s*(\d[\d,.]*)(K|M)?")
+
+_MONTHS_EN = {m: i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+_MONTHS_TH = {m: i for i, m in enumerate(
+    ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+     "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."], 1)}
+
+
+def normalize_time(raw: str, now: datetime | None = None) -> str | None:
+    """label เวลาบน FB → ISO-8601 UTC หรือ None ถ้าตีความไม่ได้"""
+    now = now or datetime.now(timezone.utc)
+    s = " ".join(raw.split())
+    low = s.lower()
+    d = None
+    if low in ("now", "just now", "ตอนนี้"):
+        d = now
+    elif (m := re.match(r"^(\d+)\s*(?:m|min|mins|minutes|นาที|น)\.?(?:\s*(?:ago|ที่แล้ว))?$", low)):
+        d = now - timedelta(minutes=int(m.group(1)))
+    elif (m := re.match(r"^(\d+)\s*(?:h|hr|hrs|hours|ชม|ชั่วโมง)\.?(?:\s*(?:ago|ที่แล้ว))?$", low)):
+        d = now - timedelta(hours=int(m.group(1)))
+    elif low in ("yesterday", "เมื่อวานนี้", "เมื่อวาน"):
+        d = now - timedelta(days=1)
+    elif (m := re.match(r"^([A-Za-z]{3,4})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?$", s)):
+        month = _MONTHS_EN.get(m.group(1).capitalize())
+        if month:
+            d = datetime(int(m.group(3) or now.year), month, int(m.group(2)),
+                         tzinfo=timezone.utc)
+    elif (m := re.match(r"^(\d{1,2})\s+([^\d\s][^\s]*)\.?(?:\s*,?\s*(\d{4}))?$", s)):
+        month = _MONTHS_TH.get(m.group(2))
+        if month:
+            d = datetime(int(m.group(3) or now.year), month, int(m.group(1)),
+                         tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc).isoformat() if d else None
+
+
+class _FeedParser(HTMLParser):
+    """เดิน DOM เก็บข้อมูลทีละโพสต์ ตาม SELECTORS['post']"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.posts: list[dict] = []
+        self._in = False
+        self._depth = 0
+        self._skip = 0
+        self._cur: dict | None = None
+
+    def _match(self, tag: str, attrs: dict) -> bool:
+        want_tag, want_attrs = SELECTORS["post"]
+        return tag == want_tag and all(attrs.get(k) == v for k, v in want_attrs.items())
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if not self._in and self._match(tag, a):
+            self._in, self._depth = True, 1
+            self._cur = {"aria": [a.get("aria-label") or ""], "text": [], "links": []}
+            return
+        if not self._in:
+            return
+        if tag in ("script", "style", "noscript", "svg"):
+            self._skip += 1
+        if tag == "div":
+            self._depth += 1
+        if tag == "a" and a.get("href"):
+            self._cur["links"].append(a["href"])
+        if a.get("aria-label"):
+            self._cur["aria"].append(a["aria-label"])
+
+    def handle_endtag(self, tag):
+        if not self._in:
+            return
+        if tag in ("script", "style", "noscript", "svg") and self._skip:
+            self._skip -= 1
+            return
+        if tag == "div":
+            self._depth -= 1
+            if self._depth <= 0:
+                self.posts.append(self._cur)
+                self._in, self._depth, self._cur = False, 0, None
+
+    def handle_data(self, data):
+        if self._in and not self._skip:
+            self._cur["text"].append(data)
+
+
+def _val(num: str, suffix: str | None) -> int:
+    mult = {"K": 1_000, "M": 1_000_000}.get(suffix or "", 1)
+    return int(float(num.replace(",", "")) * mult)
+
+
+def _counts(text: str) -> tuple[int, int]:
+    """(reactions, comments) — '12 reactions' / 'ปฏิกิริยา 5' เจอหลายที่ใช้ค่า max"""
+    reactions = comments = 0
+    for m in COUNT_BEFORE_RE.finditer(text):  # group(3) = คำอังกฤษ
+        v = _val(m.group(1), m.group(2))
+        if "react" in m.group(3).lower():
+            reactions = max(reactions, v)
+        elif "comment" in m.group(3).lower():
+            comments = max(comments, v)
+    for m in COUNT_AFTER_RE.finditer(text):   # group(1) = คำไทย, group(2) = เลข
+        v = _val(m.group(2), m.group(3))
+        if m.group(1) == "ปฏิกิริยา":
+            reactions = max(reactions, v)
+        elif m.group(1) == "ความคิดเห็น":
+            comments = max(comments, v)
+    return reactions, comments
+
+
+def _find_time(text: str) -> str | None:
+    words = text.split()
+    for n in range(min(4, len(words)), 0, -1):  # ยาวสุดก่อน — "2 hours ago" ชนะ "2 hours"
+        for i in range(len(words) - n + 1):
+            cand = " ".join(words[i:i + n])
+            if normalize_time(cand):
+                return cand
+    return None
+
+
+def _clean_body(text: str, poster: str | None, time_label: str | None) -> str:
+    s = re.sub(COUNT_BEFORE_RE, " ", text)
+    s = re.sub(COUNT_AFTER_RE, " ", s)
+    if time_label:
+        s = s.replace(time_label, " ")
+    if poster:
+        s = s.replace(poster, " ")
+    return " ".join(s.split())
+
+
+def _extract(raw: dict, group_id: str) -> dict | None:
+    links = [l.split("?")[0].rstrip("/") for l in raw["links"]
+             if "/groups/" in l or "story_fbi" in l]
+    permalink = next((l for l in links
+                      if re.search(r"(permalink|photos/|videos/|story_fbi|p\.)", l)),
+                     links[0] if links else None)
+    text = " ".join(t.strip() for t in raw["text"] if t.strip())
+
+    poster = None
+    for label in raw["aria"]:
+        m = POST_ARIA_RE.search(label)
+        if m:
+            poster = m.group(1).strip()
+            break
+
+    time_label = _find_time(text)
+    created_at = normalize_time(time_label) if time_label else None
+    reactions, comments = _counts(text)
+    body = _clean_body(text, poster, time_label)
+    if not poster or not (body or permalink):
+        return None  # nav card / suggestion card — ตัด (โพสต์จริงต้องมี aria "Posted by/โพสต์โดย")
+    post_id = hashlib.sha1((permalink or f"{group_id}|{poster}|{body[:200]}").encode()).hexdigest()
+    return {
+        "post_id": post_id,
+        "poster_name": poster,
+        "body": body,
+        "created_at": created_at,
+        "reaction_count": reactions,
+        "comment_count": comments,
+        "permalink": permalink,
+    }
+
+
+def parse_posts(html: str, group_id: str) -> list[dict]:
+    p = _FeedParser()
+    p.feed(html)
+    out = []
+    for raw in p.posts:
+        post = _extract(raw, group_id)
+        if post:
+            out.append(post)
+    return out
+
+
+def fetch_group_posts(group: dict, pages: int = 1,
+                      headless: bool = True) -> list[dict]:
+    html = capture_feed_html(group["url"], pages=pages, headless=headless)
+    return parse_posts(html, group_id_from_url(group["url"]))

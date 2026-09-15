@@ -475,9 +475,10 @@ SELECTORS = {
 POST_ARIA_RE = re.compile(
     r"(?:Posted by|โพสต์โดย)\s+(.+?)\s+(?:in|ใน)\s+(.+?)(?:[,.]|\s*$)", re.S)
 
-_NUM_WORDS = r"(?:reactions?|comments?|shares?|ปฏิกิริยา|ความคิดเห็น|แชร์)"
-COUNT_BEFORE_RE = re.compile(rf"(\d[\d,.]*)(K|M)?\s*{_NUM_WORDS}", re.I)
-COUNT_AFTER_RE = re.compile(rf"{_NUM_WORDS}\D{{0,3}}?(\d[\d,.]*)(K|M)?", re.I)
+# อังกฤษ: เลขอยู่ก่อนคำ ("12 reactions") / ไทย: คำอยู่ก่อนเลข ("ปฏิกิริยา 5")
+# แยก regex ตามภาษา — ถ้าใช้ pattern เดียว เลขตรงกลางจะสลับข้างได้
+COUNT_BEFORE_RE = re.compile(r"(\d[\d,.]*)(K|M)?\s*(reactions?|comments?|shares?)", re.I)
+COUNT_AFTER_RE = re.compile(r"(ปฏิกิริยา|ความคิดเห็น|แชร์)\s*(\d[\d,.]*)(K|M)?")
 
 _MONTHS_EN = {m: i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -501,10 +502,10 @@ def normalize_time(raw: str, now: datetime | None = None) -> str | None:
         d = now - timedelta(hours=int(m.group(1)))
     elif low in ("yesterday", "เมื่อวานนี้", "เมื่อวาน"):
         d = now - timedelta(days=1)
-    elif (m := re.match(r"^(\d{1,2})\s+([A-Za-z]{3,4})\.?(?:\s*,?\s*(\d{4}))?$", s)):
-        month = _MONTHS_EN.get(m.group(2).capitalize())
+    elif (m := re.match(r"^([A-Za-z]{3,4})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?$", s)):
+        month = _MONTHS_EN.get(m.group(1).capitalize())
         if month:
-            d = datetime(int(m.group(3) or now.year), month, int(m.group(1)),
+            d = datetime(int(m.group(3) or now.year), month, int(m.group(2)),
                          tzinfo=timezone.utc)
     elif (m := re.match(r"^(\d{1,2})\s+([^\d\s][^\s]*)\.?(?:\s*,?\s*(\d{4}))?$", s)):
         month = _MONTHS_TH.get(m.group(2))
@@ -568,35 +569,27 @@ def _val(num: str, suffix: str | None) -> int:
     return int(float(num.replace(",", "")) * mult)
 
 
-def _is_reaction(word: str) -> bool:
-    return "react" in word.lower() or "ปฏิกิริยา" in word
-
-
-def _is_comment(word: str) -> bool:
-    return "comment" in word.lower() or "ความคิดเห็น" in word
-
-
 def _counts(text: str) -> tuple[int, int]:
-    """(reactions, comments) — จับได้ทั้ง '12 reactions' และ 'ปฏิกิริยา 5'"""
+    """(reactions, comments) — '12 reactions' / 'ปฏิกิริยา 5' เจอหลายที่ใช้ค่า max"""
     reactions = comments = 0
-    for m in COUNT_BEFORE_RE.finditer(text):  # group(3) = คำ
+    for m in COUNT_BEFORE_RE.finditer(text):  # group(3) = คำอังกฤษ
         v = _val(m.group(1), m.group(2))
-        if _is_reaction(m.group(3)):
+        if "react" in m.group(3).lower():
             reactions = max(reactions, v)
-        elif _is_comment(m.group(3)):
+        elif "comment" in m.group(3).lower():
             comments = max(comments, v)
-    for m in COUNT_AFTER_RE.finditer(text):   # group(0) = ทั้ง match
-        v = _val(m.group(1), m.group(2))
-        if _is_reaction(m.group(0)):
+    for m in COUNT_AFTER_RE.finditer(text):   # group(1) = คำไทย, group(2) = เลข
+        v = _val(m.group(2), m.group(3))
+        if m.group(1) == "ปฏิกิริยา":
             reactions = max(reactions, v)
-        elif _is_comment(m.group(0)):
+        elif m.group(1) == "ความคิดเห็น":
             comments = max(comments, v)
     return reactions, comments
 
 
 def _find_time(text: str) -> str | None:
     words = text.split()
-    for n in range(1, min(5, len(words)) + 1):
+    for n in range(min(4, len(words)), 0, -1):  # ยาวสุดก่อน — "2 hours ago" ชนะ "2 hours"
         for i in range(len(words) - n + 1):
             cand = " ".join(words[i:i + n])
             if normalize_time(cand):
@@ -615,7 +608,7 @@ def _clean_body(text: str, poster: str | None, time_label: str | None) -> str:
 
 
 def _extract(raw: dict, group_id: str) -> dict | None:
-    links = [l.split("?")[0] for l in raw["links"]
+    links = [l.split("?")[0].rstrip("/") for l in raw["links"]
              if "/groups/" in l or "story_fbi" in l]
     permalink = next((l for l in links
                       if re.search(r"(permalink|photos/|videos/|story_fbi|p\.)", l)),
@@ -633,8 +626,8 @@ def _extract(raw: dict, group_id: str) -> dict | None:
     created_at = normalize_time(time_label) if time_label else None
     reactions, comments = _counts(text)
     body = _clean_body(text, poster, time_label)
-    if not body and not permalink:
-        return None  # nav card / โพสต์ที่ parse ไม่ได้ข้อมูล — ตัดออก
+    if not poster or not (body or permalink):
+        return None  # nav card / suggestion card — ตัด (โพสต์จริงต้องมี aria "Posted by/โพสต์โดย")
     post_id = hashlib.sha1((permalink or f"{group_id}|{poster}|{body[:200]}").encode()).hexdigest()
     return {
         "post_id": post_id,
@@ -664,12 +657,7 @@ def fetch_group_posts(group: dict, pages: int = 1,
     return parse_posts(html, group_id_from_url(group["url"]))
 ```
 
-**หมายเหตุต่อ implementer:** โค้ด `_counts` ด้านบนมีซากความคิดอยู่ — เขียนใหม่ให้สะอาดตาม logic นี้แทน (อย่า copy ซาก):
-- `COUNT_BEFORE_RE` จับรูปแบบ `12 reactions` / `34 ความคิดเห็น` (ตัวเลขอยู่ก่อนคำ) — group: (1)=ตัวเลข, (2)=K/M, (3)=คำ
-- `COUNT_AFTER_RE` จับรูปแบบ `ปฏิกิริยา 5` (คำอยู่ก่อนตัวเลข)
-- คำ reaction = `reaction`/`ปฏิกิริยา` (case-insensitive substring), คำ comment = `comment`/`ความคิดเห็น`
-- `K` = ×1000, `M` = ×1,000,000
-- ถ้าเจอหลายที่ ใช้ค่า max (ตัว action row เป็นของจริง)
+**หมายเหตุ:** `_counts` แยก regex ตามภาษา (อังกฤษเลขก่อนคำ / ไทยคำก่อนเลข) — อย่ารวมเป็น pattern เดียว เพราะเลขตรงกลางจะสลับข้าง ถ้ารันกับ HTML จริงแล้วโพสต์ถูกตัดหมด (poster=None) = aria format เปลี่ยน → ขยาย `POST_ARIA_RE` แล้ว rerun test
 
 - [ ] **Step 4: Run test to verify it passes**
 

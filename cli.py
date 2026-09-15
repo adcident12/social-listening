@@ -1,14 +1,28 @@
 from __future__ import annotations
 
 import argparse
+import time
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fetch import capture_feed_html, login
+from fetch import SessionExpired, capture_feed_html, fetch_group_posts, group_id_from_url, login
+from store import init_db, upsert_posts
+
+DATA = Path("data")
+DB = DATA / "sl.db"
 
 def _config() -> dict:
     with open("config.toml", "rb") as f:
         return tomllib.load(f)
+
+def _fetch_with_retry(group: dict, pages: int, headless: bool) -> list[dict]:
+    try:
+        return fetch_group_posts(group, pages=pages, headless=headless)
+    except Exception as e:  # noqa: BLE001 — network/DOM error ทั้งหมดพักแล้วลองใหม่
+        print(f"fetch failed: {e} — retry in 5 min")
+        time.sleep(300)
+        return fetch_group_posts(group, pages=pages, headless=headless)  # ล้มอีก = throw ให้ caller
 
 def cmd_login(cfg: dict, args) -> int:
     url = args.group or cfg["groups"][0]["url"]
@@ -16,12 +30,41 @@ def cmd_login(cfg: dict, args) -> int:
     print("login OK — profile saved to data/browser-profile")
     return 0
 
+def cmd_monitor(cfg: dict, args) -> int:
+    group = cfg["groups"][0]
+    gid = group_id_from_url(group["url"])
+    mon = cfg["monitor"]
+    conn = init_db(DB)
+    while True:
+        try:
+            posts = _fetch_with_retry(group, mon["pages_per_run"], mon.get("headless", True))
+        except SessionExpired:
+            print("session expired — run: python cli.py login")
+            return 1
+        except Exception as e:  # noqa: BLE001 — retry พังด้วย → ข้ามรอบ (spec §9)
+            print(f"round skipped: {e}")
+            if args.once:
+                return 1
+        else:
+            now = datetime.now(timezone.utc).isoformat()
+            upsert_posts(conn, gid, posts, now)
+            print(f"[{now}] fetched {len(posts)} posts for {group['name']}")
+            if args.once:
+                return 0
+        time.sleep(mon["interval_minutes"] * 60)
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="social-listening")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     lg = sub.add_parser("login", help="open browser, log in, save profile")
     lg.add_argument("--group", default=None)
+
+    mo = sub.add_parser("monitor", help="fetch new posts in a loop")
+    mo.add_argument("--once", action="store_true", help="single fetch then exit")
+
+    dg = sub.add_parser("digest", help="write markdown report (added in Task 6)")
+    dg.add_argument("--days", type=int, default=7)
 
     cap = sub.add_parser("capture", help="save raw feed HTML for parser debugging")
     cap.add_argument("--group", required=True)
@@ -31,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = _config()
     if args.cmd == "login":
         return cmd_login(cfg, args)
+    if args.cmd == "monitor":
+        return cmd_monitor(cfg, args)
+    if args.cmd == "digest":
+        return cmd_digest(cfg, args)  # Task 6
     if args.cmd == "capture":
         capture_feed_html(args.group, out_path=Path(args.out))
         print(f"saved {args.out}")

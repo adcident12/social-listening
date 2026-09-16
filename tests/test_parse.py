@@ -4,17 +4,21 @@ from fetch import normalize_time, parse_posts
 
 FIXTURE = """
 <html><body>
-<div role="article" aria-label="Posted by Alice in Test Group. 12 reactions, 3 comments.">
-  <div>2 hours ago</div>
-  <a href="https://www.facebook.com/groups/123/permalink.99/">Alice</a>
-  <div>ใครลองโปรตีนชากสูตรใหม่ยัง อร่อยดี</div>
-  <div>12 reactions 3 comments</div>
+<div role="article">
+  <span>Thannob Aribarg ผู้ดูแล</span><span> · </span><span>8 ชั่วโมง</span><span> · </span>
+  <span>ใครลองโปรตีนชากสูตรใหม่ยัง อร่อยดี</span>
+  <a href="https://www.facebook.com/groups/123/posts/99/?comment_id=1"></a>
+  <span>ความรู้สึกทั้งหมด 117 6 2 ถูกใจ แสดงความคิดเห็น แชร์</span>
+  <span>ดูความคิดเห็นเพิ่มเติม Nattapon Yongpaiboon ตัวเลขเกิดขึ้นจริงครับ 8 ชั่วโมง 2 ดู</span>
 </div>
 <div role="article" aria-label="โพสต์โดย Bob ใน Test Group.">
   <div>เมื่อวานนี้</div>
   <a href="https://www.facebook.com/groups/123/photos/p.88/">Bob</a>
   <div>ออกกำลังกายตอนเช้าดีกว่าตอนไหน</div>
   <div>ปฏิกิริยา 5 ความคิดเห็น 2</div>
+</div>
+<div role="article" aria-label="กำลังโหลด…">
+  <div></div>
 </div>
 <div role="article" aria-label="Some nav card.">
   <a href="https://www.facebook.com/groups/123/members/">members</a>
@@ -25,14 +29,16 @@ FIXTURE = """
 
 def test_parse_posts_fields():
     posts = parse_posts(FIXTURE, "123")
-    assert len(posts) == 2  # nav card (ไม่มี body) ถูกตัด
+    assert len(posts) == 2  # loading skeleton + nav card ถูกตัด
     a = posts[0]
-    assert a["poster_name"] == "Alice"
-    assert a["permalink"] == "https://www.facebook.com/groups/123/permalink.99"
-    assert a["reaction_count"] == 12
-    assert a["comment_count"] == 3
+    assert a["poster_name"] == "Thannob Aribarg"
+    assert a["permalink"] == "https://www.facebook.com/groups/123/posts/99"
+    assert a["reaction_count"] == 117
+    assert a["comment_count"] == 6
     assert "โปรตีน" in a["body"]
-    assert a["created_at"].startswith("2026") if a["created_at"] else True
+    assert "ความรู้สึกทั้งหมด" not in a["body"]  # reaction block ตัดออก
+    assert "Nattapon" not in a["body"]  # comment teaser ตัดออก
+    assert a["created_at"] is not None
     b = posts[1]
     assert b["poster_name"] == "Bob"
     assert b["reaction_count"] == 5

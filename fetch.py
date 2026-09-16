@@ -80,6 +80,14 @@ POST_ARIA_RE = re.compile(
 COUNT_BEFORE_RE = re.compile(r"(\d[\d,.]*)(K|M)?\s*(reactions?|comments?|shares?)", re.I)
 COUNT_AFTER_RE = re.compile(r"(ปฏิกิริยา|ความคิดเห็น|แชร์)\s*(\d[\d,.]*)(K|M)?")
 
+# DOM จริง (calibrate 2026-09-16): "ความรู้สึกทั้งหมด N [cm] [sh] ถูกใจ" — เลขมาก่อน label
+REACTION_BLOCK_RE = re.compile(
+    r"ความรู้สึกทั้งหมด\s*(\d[\d,.]*)([KM])?\s*([0-9][0-9,]*)?\s*([0-9][0-9,]*)?\s*ถูกใจ")
+# post line ของจริง: "ชื่อ [badge] · เวลา · body" (ไม่มี aria "Posted by")
+POST_LINE_RE = re.compile(r"^(?P<poster>[^·]+?)\s*·\s*(?P<time>[^·]+?)\s*·\s*(?P<body>.*)$", re.S)
+BADGE_RE = re.compile(r"\s*(ผู้ดูแล|ผู้เขียน|ผู้ก่อตั้ง|Owner|Admin|Author)(,.*)?$")
+LOADING_RE = re.compile(r"กำลังโหลด|Loading")
+
 _MONTHS_EN = {m: i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
@@ -170,8 +178,13 @@ def _val(num: str, suffix: str | None) -> int:
 
 
 def _counts(text: str) -> tuple[int, int]:
-    """(reactions, comments) — '12 reactions' / 'ปฏิกิริยา 5' เจอหลายที่ใช้ค่า max"""
+    """(reactions, comments) — หลาย pattern ใช้ค่า max; เลขบล็อกแรกคือ reactions"""
     reactions = comments = 0
+    m = REACTION_BLOCK_RE.search(text)  # DOM จริง: "ความรู้สึกทั้งหมด 117 6 2 ถูกใจ"
+    if m:
+        reactions = _val(m.group(1), m.group(2))
+        if m.group(3):
+            comments = _val(m.group(3), None)
     for m in COUNT_BEFORE_RE.finditer(text):  # group(3) = คำอังกฤษ
         v = _val(m.group(1), m.group(2))
         if "react" in m.group(3).lower():
@@ -208,6 +221,8 @@ def _clean_body(text: str, poster: str | None, time_label: str | None) -> str:
 
 
 def _extract(raw: dict, group_id: str) -> dict | None:
+    if any(LOADING_RE.search(a) for a in raw["aria"]):
+        return None  # loading skeleton (role=article ด้วย แต่ไม่ใช่โพสต์)
     links = [l.split("?")[0].rstrip("/") for l in raw["links"]
              if "/groups/" in l or "story_fbi" in l]
     permalink = next((l for l in links
@@ -216,18 +231,27 @@ def _extract(raw: dict, group_id: str) -> dict | None:
     text = " ".join(t.strip() for t in raw["text"] if t.strip())
 
     poster = None
-    for label in raw["aria"]:
-        m = POST_ARIA_RE.search(label)
-        if m:
-            poster = m.group(1).strip()
-            break
+    time_label = None
+    body = text
+    m = POST_LINE_RE.match(text)  # DOM จริง: "ชื่อ [badge] · เวลา · body"
+    if m:
+        poster = BADGE_RE.sub("", m.group("poster")).strip()
+        time_label = m.group("time").strip()
+        body = m.group("body")
+    else:
+        for label in raw["aria"]:  # fallback: aria "Posted by X in Y"
+            m2 = POST_ARIA_RE.search(label)
+            if m2:
+                poster = m2.group(1).strip()
+                break
+        time_label = _find_time(text)
 
-    time_label = _find_time(text)
     created_at = normalize_time(time_label) if time_label else None
-    reactions, comments = _counts(text)
-    body = _clean_body(text, poster, time_label)
+    reactions, comments = _counts(body)
+    body = re.split(r"ความรู้สึกทั้งหมด", body)[0]  # หลังบล็อกนี้คือ comments → ตัด
+    body = _clean_body(body, poster, time_label)
     if not poster or not (body or permalink):
-        return None  # nav card / suggestion card — ตัด (โพสต์จริงต้องมี aria "Posted by/โพสต์โดย")
+        return None  # nav card / suggestion card — ตัด
     post_id = hashlib.sha1((permalink or f"{group_id}|{poster}|{body[:200]}").encode()).hexdigest()
     return {
         "post_id": post_id,

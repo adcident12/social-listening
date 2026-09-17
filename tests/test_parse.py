@@ -17,6 +17,13 @@ FIXTURE = """
   <div>ออกกำลังกายตอนเช้าดีกว่าตอนไหน</div>
   <div>ปฏิกิริยา 5 ความคิดเห็น 2</div>
 </div>
+<div role="article">
+  <span aria-label="Charlie">Charlie</span><span aria-label="Charlie">C</span>
+  <span aria-label="8 ชั่วโมง">8 ชั่วโมง</span>
+  <span aria-label="ผู้ดูแล, ดูรายละเอียดเครื่องหมาย">ผู้ดูแล</span>
+  <span>โพสต์ไม่มีไม้กระเดื่องแต่มี aria เวลา</span>
+  <a href="https://www.facebook.com/groups/123/posts/77/"></a>
+</div>
 <div role="article" aria-label="กำลังโหลด…">
   <div></div>
 </div>
@@ -29,12 +36,13 @@ FIXTURE = """
 
 def test_parse_posts_fields():
     posts = parse_posts(FIXTURE, "123")
-    assert len(posts) == 2  # loading skeleton + nav card ถูกตัด
+    assert len(posts) == 3  # loading skeleton + nav card ถูกตัด
     a = posts[0]
     assert a["poster_name"] == "Thannob Aribarg"
     assert a["permalink"] == "https://www.facebook.com/groups/123/posts/99"
     assert a["reaction_count"] == 117
     assert a["comment_count"] == 6
+    assert a["share_count"] == 2  # "117 6 2 ถูกใจ" → เลขที่ 3 คือ shares
     assert "โปรตีน" in a["body"]
     assert "ความรู้สึกทั้งหมด" not in a["body"]  # reaction block ตัดออก
     assert "Nattapon" not in a["body"]  # comment teaser ตัดออก
@@ -43,7 +51,11 @@ def test_parse_posts_fields():
     assert b["poster_name"] == "Bob"
     assert b["reaction_count"] == 5
     assert b["comment_count"] == 2
+    assert b["share_count"] == 0
     assert "ออกกำลังกาย" in b["body"]
+    c = posts[2]
+    assert c["poster_name"] == "Charlie"
+    assert c["created_at"] is not None  # เวลาจาก aria "8 ชั่วโมง" (fallback 2)
 
 def test_post_id_stable():
     p1 = parse_posts(FIXTURE, "123")[0]
@@ -61,4 +73,29 @@ def test_normalize_time_variants():
     assert normalize_time("เมื่อวานนี้", now=now).startswith("2026-09-14T12:00")
     assert normalize_time("12 ก.ย.", now=now) == "2026-09-12T00:00:00+00:00"
     assert normalize_time("Sep 12, 2026", now=now) == "2026-09-12T00:00:00+00:00"
+    assert normalize_time("2 วัน", now=now) == "2026-09-13T12:00:00+00:00"
+    assert normalize_time("16 สัปดาห์", now=now) == "2026-05-26T12:00:00+00:00"
+    assert normalize_time("3 เดือน", now=now) == "2026-06-17T12:00:00+00:00"
     assert normalize_time("อะไรก็ไม่รู้", now=now) is None
+    assert normalize_time("23 พฤษภาคม", now=now) == "2026-05-23T00:00:00+00:00"
+    assert normalize_time("9 กันยายน เวลา 11:50 น.", now=now) == "2026-09-09T00:00:00+00:00"
+
+def test_thai_unit_counts_and_see_more_cut():
+    # "พัน" unit (decimal) + full month + เวลา suffix + body ตัดที่ see-more
+    html = """
+    <html><body>
+    <div role="article">
+      <span>สมชาย ใจดี</span><span> · </span><span>9 กันยายน เวลา 11:50 น.</span><span> · </span>
+      <span>ข่าวดีวันนี้</span>
+      <a href="https://www.facebook.com/groups/123/posts/55/"></a>
+      <span>1.4 พัน 5.1 พัน 1.4 พัน \u0e14\u0e39\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21</span>  # ดูเพิ่่มเติม — DOM cps (calibrate 2026-09-17)
+    </div>
+    </body></html>
+    """
+    posts = parse_posts(html, "123")
+    assert len(posts) == 1
+    p = posts[0]
+    assert (p["reaction_count"], p["comment_count"], p["share_count"]) == (1400, 5100, 1400)
+    assert p["created_at"] == "2026-09-09T00:00:00+00:00"
+    assert p["body"] == "ข่าวดีวันนี้"
+    assert "ติดตาม" not in p["body"]

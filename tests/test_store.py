@@ -1,3 +1,4 @@
+import json
 from store import fetch_recent, init_db, upsert_posts
 
 def _posts():
@@ -31,3 +32,15 @@ def test_fetch_recent_filters_since_and_sorts_desc(tmp_path):
     assert [r["post_id"] for r in rows] == ["p2"]
     rows = fetch_recent(conn, "g1", "2020-01-01T00:00:00+00:00")
     assert [r["post_id"] for r in rows] == ["p2", "p1"]
+
+def test_upsert_populates_keywords(tmp_path):
+    conn = init_db(tmp_path / "t.db")
+    upsert_posts(conn, "g1", [
+        {"post_id": "p1", "poster_name": "A", "body": "flashsale flashsale review",
+         "created_at": "2026-09-14T10:00:00+00:00",
+         "reaction_count": 0, "comment_count": 0, "permalink": "https://x/1"},
+    ], "2026-09-15T00:00:00+00:00")
+    row = conn.execute("SELECT keywords FROM posts WHERE post_id='p1'").fetchone()
+    kws = json.loads(row[0])
+    assert kws.count("flashsale") == 1  # dedupe — 1 คำต่อโพสต์
+    assert "review" in kws

@@ -23,7 +23,7 @@ def _tokens(text: str) -> list[str]:
 
 
 def _line(r: dict) -> str:
-    eng = (r["reaction_count"] or 0) + (r["comment_count"] or 0)
+    eng = (r["reaction_count"] or 0) + (r["comment_count"] or 0) + (r.get("share_count") or 0)
     snippet = " ".join((r["body"] or "").split())[:120]
     return (f"- [{eng}] {r['created_at'] or '—'} — {r['poster_name']}: "
             f"{snippet} {r['permalink'] or ''}")
@@ -50,7 +50,8 @@ def build_digest(rows: list[dict], days: int,
         lines.append(f"- {name}: {c}")
 
     lines += ["", "## Top posts by engagement"]
-    top = sorted(rows, key=lambda r: (r["reaction_count"] or 0) + (r["comment_count"] or 0),
+    top = sorted(rows, key=lambda r: (r["reaction_count"] or 0) + (r["comment_count"] or 0)
+                 + (r.get("share_count") or 0),
                  reverse=True)[:top_n_posts]
     lines += [_line(r) for r in top]
 

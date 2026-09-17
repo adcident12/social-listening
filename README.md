@@ -17,6 +17,13 @@
     .venv\Scripts\python cli.py monitor --once # ดึงครั้งเดียว
     .venv\Scripts\python cli.py digest --days 7
 
+## Dashboard (UI)
+
+ต้องมี data ใน `data/sl.db` (รัน `monitor` แล้ว) — terminal 2 ตัว:
+
+    .venv\Scripts\python -m uvicorn api:app --port 8000
+    cd dashboard; npm run dev        # → http://localhost:3000
+
 ## Notes
 
 - ถ้า Facebook เปลี่ยนหน้าเว็บ ให้แก้ selector ใน `fetch.py` (dict `SELECTORS` + regex)

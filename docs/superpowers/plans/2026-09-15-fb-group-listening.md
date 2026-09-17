@@ -32,7 +32,7 @@
 **Interfaces:**
 - Produces: venv ที่ import `playwright`, `pythainlp`, `pytest` ได้, `config.toml` ตาม spec §7
 
-- [ ] **Step 1: สร้าง venv + ติดตั้ง deps**
+- [x] **Step 1: สร้าง venv + ติดตั้ง deps**
 
 ```powershell
 python -m venv .venv
@@ -40,7 +40,7 @@ python -m venv .venv
 .venv\Scripts\python -m playwright install chromium
 ```
 
-- [ ] **Step 2: เขียน `.gitignore`**
+- [x] **Step 2: เขียน `.gitignore`**
 
 ```gitignore
 .venv/
@@ -49,7 +49,7 @@ __pycache__/
 data/
 ```
 
-- [ ] **Step 3: เขียน `config.toml`**
+- [x] **Step 3: เขียน `config.toml`**
 
 ```toml
 [[groups]]
@@ -66,7 +66,7 @@ top_n_keywords = 15
 top_n_posts    = 10
 ```
 
-- [ ] **Step 4: เขียน `tests/test_smoke.py` + รัน**
+- [x] **Step 4: เขียน `tests/test_smoke.py` + รัน**
 
 ```python
 def test_imports():
@@ -77,7 +77,7 @@ def test_imports():
 Run: `.venv\Scripts\python -m pytest -v`
 Expected: 1 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add .gitignore config.toml tests/test_smoke.py
@@ -99,7 +99,7 @@ git commit -m "chore: scaffold venv, deps, config, smoke test"
   - `upsert_posts(conn: sqlite3.Connection, group_id: str, posts: list[dict], fetched_at: str) -> int` — dict keys ของ post: `post_id, poster_name, body, created_at, reaction_count, comment_count, permalink`
   - `fetch_recent(conn: sqlite3.Connection, group_id: str, since_iso: str) -> list[dict]` — คืน dict ตัดตาม `created_at >= since_iso`, เรียง `created_at DESC`
 
-- [ ] **Step 1: Write the failing test** — `tests/test_store.py`
+- [x] **Step 1: Write the failing test** — `tests/test_store.py`
 
 ```python
 from store import fetch_recent, init_db, upsert_posts
@@ -137,12 +137,12 @@ def test_fetch_recent_filters_since_and_sorts_desc(tmp_path):
     assert [r["post_id"] for r in rows] == ["p2", "p1"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv\Scripts\python -m pytest tests/test_store.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'store'`
 
-- [ ] **Step 3: Write `store.py`**
+- [x] **Step 3: Write `store.py`**
 
 ```python
 from __future__ import annotations
@@ -209,12 +209,12 @@ def fetch_recent(conn: sqlite3.Connection, group_id: str, since_iso: str) -> lis
     return [dict(r) for r in rows]
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.venv\Scripts\python -m pytest tests/test_store.py -v`
 Expected: 3 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add store.py tests/test_store.py
@@ -239,7 +239,7 @@ git commit -m "feat: sqlite store with dedupe upsert and since-query"
   - `cli.py login [--group <url>]` — เปิด browser ให้ล็อกอิน (fetch.login มีแล้วใน task นี้)
   - `cli.py capture --group <url> --out <path>` — บันทึก feed HTML จริงให้ Task 4 ใช้ calibrate parser
 
-- [ ] **Step 1: เขียน browser functions ใน `fetch.py`**
+- [x] **Step 1: เขียน browser functions ใน `fetch.py`**
 
 ```python
 from __future__ import annotations
@@ -308,7 +308,7 @@ def capture_feed_html(group_url: str, profile_dir: Path = PROFILE_DIR,
     return html
 ```
 
-- [ ] **Step 2: เขียน `cli.py` (เวอร์ชัน capture อย่างเดียว — monitor/digest เพิ่มใน task หลัง)**
+- [x] **Step 2: เขียน `cli.py` (เวอร์ชัน capture อย่างเดียว — monitor/digest เพิ่มใน task หลัง)**
 
 ```python
 from __future__ import annotations
@@ -353,12 +353,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 3: Verify syntax**
+- [x] **Step 3: Verify syntax**
 
 Run: `.venv\Scripts\python -m pytest -v`
 Expected: smoke test ยัง pass (import ไม่พัง)
 
-- [ ] **Step 4: (manual — ผู้ใช้ต้องทำเอง) ตั้งค่า config และ login**
+- [x] **Step 4: (manual — ผู้ใช้ต้องทำเอง) ตั้งค่า config และ login**
 
 ผู้ใช้ใส่ group URL จริงใน `config.toml` แล้วรัน:
 
@@ -368,13 +368,13 @@ Expected: smoke test ยัง pass (import ไม่พัง)
 
 browser จะเปิดให้ล็อกอิน Facebook เอง (profile ถูกเก็บที่ `data/browser-profile`)
 
-- [ ] **Step 5: (manual) Capture feed HTML จริง**
+- [x] **Step 5: (manual) Capture feed HTML จริง**
 
 ```powershell
 .venv\Scripts\python cli.py capture --group (ค่า url จาก config.toml) --out data/sample.html
 ```
 
-- [ ] **Step 6: Verify capture**
+- [x] **Step 6: Verify capture**
 
 ```powershell
 (Select-String -Path data\sample.html -Pattern 'role="article"').Count
@@ -383,7 +383,7 @@ browser จะเปิดให้ล็อกอิน Facebook เอง (pro
 Expected: `> 0` (จำนวนโพสต์ในหน้า)
 **ถ้าได้ 0** — inspect `data/sample.html` หา container ของโพสต์จริง (search "article" / โครงสร้าง feed) แล้วปรับ `SELECTORS["post"]` ใน Task 4 ให้ตรงกับ DOM ที่เจอ — ห้ามปล่อย parser จับอะไรก็ได้แบบเงียบ
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add fetch.py cli.py
@@ -406,7 +406,7 @@ git commit -m "feat: playwright login + feed capture, cli capture command"
   - `parse_posts(html: str, group_id: str) -> list[dict]` — dict keys: `post_id, poster_name, body, created_at, reaction_count, comment_count, permalink`
   - `fetch_group_posts(group: dict, pages: int = 1, headless: bool = True) -> list[dict]`
 
-- [ ] **Step 1: Write the failing test** — `tests/test_parse.py`
+- [x] **Step 1: Write the failing test** — `tests/test_parse.py`
 
 ```python
 from datetime import datetime, timezone
@@ -469,12 +469,12 @@ def test_normalize_time_variants():
     assert normalize_time("อะไรก็ไม่รู้", now=now) is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv\Scripts\python -m pytest tests/test_parse.py -v`
 Expected: FAIL — `ImportError: cannot import name 'parse_posts'`
 
-- [ ] **Step 3: เพิ่ม parser ต่อท้าย `fetch.py`**
+- [x] **Step 3: เพิ่ม parser ต่อท้าย `fetch.py`**
 
 ```python
 import hashlib
@@ -674,12 +674,12 @@ def fetch_group_posts(group: dict, pages: int = 1,
 
 **หมายเหตุ:** `_counts` แยก regex ตามภาษา (อังกฤษเลขก่อนคำ / ไทยคำก่อนเลข) — อย่ารวมเป็น pattern เดียว เพราะเลขตรงกลางจะสลับข้าง ถ้ารันกับ HTML จริงแล้วโพสต์ถูกตัดหมด (poster=None) = aria format เปลี่ยน → ขยาย `POST_ARIA_RE` แล้ว rerun test
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.venv\Scripts\python -m pytest tests/test_parse.py -v`
 Expected: 4 passed
 
-- [ ] **Step 5: Calibrate กับ HTML จริง (สำคัญ — DOM จริงต่างจาก fixture)**
+- [x] **Step 5: Calibrate กับ HTML จริง (สำคัญ — DOM จริงต่างจาก fixture)**
 
 ```powershell
 .venv\Scripts\python -c "from fetch import parse_posts; posts = parse_posts(open('data/sample.html', encoding='utf-8').read(), 'g'); print(len(posts)); [print(p['poster_name'], '|', p['reaction_count'], p['comment_count'], '|', p['created_at'], '|', p['body'][:80]) for p in posts[:5]]"
@@ -688,7 +688,7 @@ Expected: 4 passed
 Expected: จำนวนโพสต์ > 0, ชื่อผู้โพสต์/จำนวน reaction/เวลา/ตัวหนังสือดูสมเหตุสมผล
 **ถ้าไม่ตรง** — เปิด `data/sample.html` เทียบโครงสร้าง แล้วปรับ regex/`SELECTORS` ใน `fetch.py` จนตรง — นี่คือจุดที่ DOM จริงอาจต่างจาก fixture, ปรับแล้ว rerun test ให้ยัง pass
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add fetch.py tests/test_parse.py
@@ -706,7 +706,7 @@ git commit -m "feat: feed HTML parser (role=article walk, TH/EN time, counts) + 
 - Consumes: `fetch_group_posts`, `SessionExpired`, `group_id_from_url` (fetch.py), `init_db`, `upsert_posts` (store.py), `config.toml`
 - Produces: `python cli.py monitor [--once]`, `python cli.py login [--group <url>]` — monitor loop ตาม spec §6/§9
 
-- [ ] **Step 1: เขียน `monitor` + `login` commands ใน `cli.py`**
+- [x] **Step 1: เขียน `monitor` + `login` commands ใน `cli.py`**
 
 แก้ `main()` ใน `cli.py` — เพิ่ม subcommands (เก็บ `capture` เดิมไว้):
 
@@ -798,12 +798,12 @@ if __name__ == "__main__":
 
 หมายเหตุ: `cmd_digest` ยังไม่มี — Task 6 เพิ่ม (Step 1 ของ Task 6 เขียนให้, ถ้ารัน `cli.py digest` ก่อน Task 6 จะ NameError — ยอมรับได้ เพราะเป็น command ของ Task 6)
 
-- [ ] **Step 2: Verify syntax + tests ยังเขียว**
+- [x] **Step 2: Verify syntax + tests ยังเขียว**
 
 Run: `.venv\Scripts\python -m pytest -v`
 Expected: ทุก test ยัง pass
 
-- [ ] **Step 3: (manual) รัน monitor รอบเดียว**
+- [x] **Step 3: (manual) รัน monitor รอบเดียว**
 
 ```powershell
 .venv\Scripts\python cli.py monitor --once
@@ -817,7 +817,7 @@ Expected: `fetched N posts` (N > 0), แล้วตรวจ:
 
 Expected: count > 0
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add cli.py
@@ -839,7 +839,7 @@ git commit -m "feat: monitor loop with retry + session-expired handling"
   - `build_digest(rows: list[dict], days: int, top_n_keywords: int, top_n_posts: int) -> str` — Markdown ตาม spec §8
   - `python cli.py digest [--days N]` → `reports/<group-name>-<YYYY-MM-DD>.md` + พิมพ์ md ใน terminal
 
-- [ ] **Step 1: Write the failing test** — `tests/test_digest.py`
+- [x] **Step 1: Write the failing test** — `tests/test_digest.py`
 
 ```python
 from digest import build_digest
@@ -878,12 +878,12 @@ def test_empty_rows():
     assert "(no posts in range)" in md
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv\Scripts\python -m pytest tests/test_digest.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'digest'`
 
-- [ ] **Step 3: เขียน `digest.py`**
+- [x] **Step 3: เขียน `digest.py`**
 
 ```python
 from __future__ import annotations
@@ -948,7 +948,7 @@ def build_digest(rows: list[dict], days: int,
     return "\n".join(lines)
 ```
 
-- [ ] **Step 4: เพิ่ม `cmd_digest` ใน `cli.py`**
+- [x] **Step 4: เพิ่ม `cmd_digest` ใน `cli.py`**
 
 ```python
 from datetime import timedelta
@@ -972,12 +972,12 @@ def cmd_digest(cfg: dict, args) -> int:
     return 0
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python -m pytest -v`
 Expected: ทุก test pass (รวม smoke, store, parse, digest)
 
-- [ ] **Step 6: (manual) สร้าง digest จากข้อมูลจริง**
+- [x] **Step 6: (manual) สร้าง digest จากข้อมูลจริง**
 
 ```powershell
 .venv\Scripts\python cli.py digest --days 30
@@ -985,7 +985,7 @@ Expected: ทุก test pass (รวม smoke, store, parse, digest)
 
 Expected: Markdown มี top keywords/posters/posts ที่ดูสมเหตุสมผล, ไฟล์อยู่ใน `reports/`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add digest.py cli.py tests/test_digest.py
@@ -1004,12 +1004,12 @@ git commit -m "feat: keyword/engagement digest + cli digest command"
 - Consumes: ทุกอย่าง
 - Produces: ระบบที่รันครบวงจร + README
 
-- [ ] **Step 1: รัน test ทั้งหมด**
+- [x] **Step 1: รัน test ทั้งหมด**
 
 Run: `.venv\Scripts\python -m pytest -v`
 Expected: ทุก test pass
 
-- [ ] **Step 2: (manual) End-to-end checklist กับกลุ่มจริง**
+- [x] **Step 2: (manual) End-to-end checklist กับกลุ่มจริง**
 
 ```powershell
 .venv\Scripts\python cli.py login            # ถ้า session หมด
@@ -1018,11 +1018,11 @@ Expected: ทุก test pass
 ```
 
 ตรวจ:
-- [ ] `monitor --once` เพิ่ม/อัปเดต posts ใน db (รัน 2 ครั้ง подряд → count ไม่เพิ่ม, reactions อัปเดต)
-- [ ] `digest` report อ่านได้, keywords สะท้อนเนื้อหาจริงของกลุ่ม
-- [ ] รัน `monitor` (ไม่มี `--once`) ทิ้งไว้สัก 2 รอบ (30 นาที) → ทำงานต่อเองไม่ error
+- [x] `monitor --once` เพิ่ม/อัปเดต posts ใน db (รัน 2 ครั้ง подряд → count ไม่เพิ่ม, reactions อัปเดต)
+- [x] `digest` report อ่านได้, keywords สะท้อนเนื้อหาจริงของกลุ่ม
+- [x] รัน `monitor` (ไม่มี `--once`) ทิ้งไว้สัก 2 รอบ (30 นาที) → ทำงานต่อเองไม่ error
 
-- [ ] **Step 3: เขียน `README.md`**
+- [x] **Step 3: เขียน `README.md`**
 
 ```markdown
 # social-listening
@@ -1052,7 +1052,7 @@ Expected: ทุก test pass
 - รันเบาๆ: 30 นาที/รอบ, 1 หน้า/รอบ — เพื่อลดความเสี่ยงบัญชีถูก flag
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add README.md reports/

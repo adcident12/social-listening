@@ -40,18 +40,27 @@ def login(group_url: str, profile_dir: Path = PROFILE_DIR) -> None:
         ctx.close()
         pw.stop()
 
-def _expand_collapsed(page, limit: int = 10) -> None:
-    """คลิก "ดูเพิ่่มเติม" ของโพสต์ที่ถูก truncate — ไม่คลิกก็เก็บได้แค่ย่อหน้าแรก"""
-    for label in ("\u0e14\u0e39\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21",  # ดูเพิ่่มเติม (DOM ใช้ 0E39)
-                  "\u0e14\u0e38\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21",
-                  "See more"):
-        btns = page.locator(f'div[role="button"]:has-text("{label}")')
-        for i in range(min(btns.count(), limit)):  # ponytail: cap 10/รอบ, เพิ่ม limit ถ้าโพสต์ยาวเยอะ
-            try:
-                btns.nth(i).click(timeout=3000)
-                page.wait_for_timeout(300)
-            except Exception:
-                continue  # DOM re-render ระหว่างคลิก → ลองปุ่มถัดไป
+def _expand_collapsed(page, limit: int = 10, max_passes: int = 3) -> None:
+    """คลิก "ดูเพิ่่มเติม" ของโพสต์ที่ถูก truncate — ไม่คลิกก็เก็บได้แค่ย่อหน้าแรก
+    เรียกซ้ำจนปุ่มหมด (cap max_passes): ปุ่มที่เกิน limit/คลิกหลุดระหว่าง re-render ต้องได้ผ่านถัดไป"""
+    labels = ("\u0e14\u0e39\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21",  # ดูเพิ่่มเติม (DOM ใช้ 0E39)
+              "\u0e14\u0e38\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21",
+              "See more")
+    for _ in range(max_passes):
+        if not any(page.locator(f'div[role="button"]:has-text("{l}")').count() for l in labels):
+            return
+        clicked = 0
+        for label in labels:
+            btns = page.locator(f'div[role="button"]:has-text("{label}")')
+            for i in range(min(btns.count(), limit)):  # ponytail: cap 10/รอบ, เพิ่ม limit ถ้าโพสต์ยาวเยอะ
+                try:
+                    btns.nth(i).click(timeout=3000)
+                    page.wait_for_timeout(300)
+                    clicked += 1
+                except Exception:
+                    continue  # DOM re-render ระหว่างคลิก → ลองปุ่มถัดไป
+        if clicked == 0:
+            return  # ปุ่มคลิกไม่ได้ทุกปุ่ม — หยุด (กัน loop ไร้ประโยชน์)
 
 
 def capture_feed_html(group_url: str, profile_dir: Path = PROFILE_DIR,

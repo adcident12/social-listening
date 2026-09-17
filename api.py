@@ -125,3 +125,61 @@ def list_posts(
             f"SELECT * FROM posts WHERE {where_sql} ORDER BY {order} LIMIT ? OFFSET ?",
             params + [limit, offset]).fetchall()
     return {"total": total, "posts": [_row_to_post(r) for r in rows]}
+
+
+@app.get("/posts/{post_id}")
+def get_post(post_id: str, group_id: str | None = None):
+    _, gid = _group_info(group_id)
+    with _ro() as conn:
+        r = conn.execute("SELECT * FROM posts WHERE post_id=? AND group_id=?",
+                         (post_id, gid)).fetchone()
+    if not r:
+        raise HTTPException(404, "post not found")
+    return _row_to_post(r)
+
+
+@app.get("/stats")
+def stats(days: int = Query(7, ge=1, le=90), group_id: str | None = None):
+    name, gid = _group_info(group_id)
+    now = datetime.now(timezone.utc)
+    with _ro() as conn:
+        rows = fetch_recent(conn, gid, (now - timedelta(days=days)).isoformat())
+        new24 = conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE group_id=? AND"
+            " (created_at IS NULL OR created_at >= ?)",
+            (gid, (now - timedelta(days=1)).isoformat())).fetchone()[0]
+        last = conn.execute("SELECT MAX(fetched_at) FROM posts").fetchone()[0]
+    # fetch_recent return list[dict] — r["col"] ได้เลย
+    kw: Counter = Counter()
+    for r in rows:
+        if r["keywords"]:  # NULL (row ก่อน migration) = skip
+            kw.update(json.loads(r["keywords"]))
+    total = len(rows)
+    return {
+        "group": name,
+        "days": days,
+        "total_posts": total,
+        "new_since_yesterday": new24,
+        "last_fetched": last,
+        "top_keywords": [
+            {"word": w, "count": c, "pct": c / total} for w, c in kw.most_common(15)
+        ],
+        "top_posters": [
+            {"name": n, "count": c}
+            for n, c in Counter(r["poster_name"] or "?" for r in rows).most_common(10)
+        ],
+        "top_posts": [
+            {
+                "post_id": r["post_id"],
+                "poster_name": r["poster_name"],
+                "snippet": " ".join((r["body"] or "").split())[:120],
+                "created_at": r["created_at"],
+                "engagement": (r["reaction_count"] or 0) + (r["comment_count"] or 0)
+                              + (r["share_count"] or 0),
+                "permalink": r["permalink"],
+            }
+            for r in sorted(rows, key=lambda r: (r["reaction_count"] or 0)
+                            + (r["comment_count"] or 0) + (r["share_count"] or 0),
+                            reverse=True)[:10]
+        ],
+    }

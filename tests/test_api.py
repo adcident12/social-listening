@@ -72,3 +72,53 @@ def test_posts_pagination_date_desc():
     # date desc ทั้งหมด = b, a, c
     assert d["total"] == 3
     assert [p["post_id"] for p in d["posts"]] == ["a", "c"]
+
+
+def test_detail_ok():
+    p = client.get("/posts/c", params={"group_id": GID}).json()
+    assert p["post_id"] == "c"
+    assert p["body"].startswith("review")
+    assert "flashsale" not in p["keywords"]
+
+
+def test_detail_404():
+    assert client.get("/posts/nope", params={"group_id": GID}).status_code == 404
+
+
+def test_stats_window_and_keyword_dedupe():
+    d1 = client.get("/stats", params={"group_id": GID, "days": 1}).json()
+    assert d1["total_posts"] == 1  # เฉพาะ b (2 ชม.)
+    assert d1["new_since_yesterday"] == 1
+    flash1 = next(k for k in d1["top_keywords"] if k["word"] == "flashsale")
+    assert flash1["count"] == 1  # 1 ครั้ง/โพสต์
+    d7 = client.get("/stats", params={"group_id": GID, "days": 7}).json()
+    assert d7["total_posts"] == 3
+    flash7 = next(k for k in d7["top_keywords"] if k["word"] == "flashsale")
+    assert flash7["count"] == 2  # a + b
+    assert d7["top_posters"][0] == {"name": "สมชาย", "count": 3}
+    assert d7["top_posts"][0]["post_id"] == "c"  # engagement 9 สูงสุด
+
+
+def test_stats_tolerates_null_keywords():
+    conn = init_db(api.DB)
+    conn.execute(
+        "INSERT INTO posts (post_id, group_id, poster_name, body, created_at, fetched_at,"
+        " reaction_count, comment_count, share_count, permalink, keywords)"
+        " VALUES ('nullkw', ?, 'x', 'old post no keywords', ?, ?, 1, 0, 0, NULL, NULL)",
+        (GID, _ts(1), FETCHED_AT),
+    )
+    conn.commit()
+    try:
+        d = client.get("/stats", params={"group_id": GID, "days": 1}).json()
+        assert d["total_posts"] == 2  # b + nullkw — ไม่ crash กับ keywords NULL
+    finally:
+        conn.execute("DELETE FROM posts WHERE post_id='nullkw'")
+        conn.commit()
+
+
+def test_stats_default_group_and_zero_state():
+    # ไม่ส่ง group_id → groups[0] จาก config.toml (รันจาก repo root เท่านั้น)
+    d = client.get("/stats").json()
+    assert d["group"] == "กลุ่มเป้าหมาย"
+    assert d["total_posts"] == 0  # temp DB ไม่มีโพสต์ของ group นี้ → zero state
+    assert d["top_keywords"] == []

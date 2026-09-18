@@ -58,4 +58,7 @@ def build_digest(rows: list[dict], days: int,
     lines += ["", "## Latest posts"]
     lines += [_line(r) for r in rows[:top_n_posts]]  # rows มาเรียง DESC แล้ว
 
+    # ponytail: placeholder ตัวเดียว — LLM sentiment มาใน Phase 2 (ยังไม่ fix format)
+    lines += ["", "## Sentiment", "(pending — LLM analysis, Phase 2)"]
+
     return "\n".join(lines)

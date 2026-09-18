@@ -32,3 +32,7 @@ def test_top_posts_by_engagement():
 def test_empty_rows():
     md = build_digest([], 7, 5, 3)
     assert "(no posts in range)" in md
+
+def test_sentiment_placeholder_present():
+    md = build_digest(ROWS, 7, 5, 3)
+    assert "## Sentiment" in md

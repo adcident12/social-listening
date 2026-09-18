@@ -2,6 +2,7 @@
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 os.environ["SL_DB"] = tempfile.mktemp(suffix=".db")
 
@@ -19,8 +20,8 @@ def _ts(hours_ago: float) -> str:
 FETCHED_AT = _ts(1)
 
 
-def _post(pid, body, created, r=0, c=0, s=0):
-    return {"post_id": pid, "poster_name": "สมชาย", "body": body,
+def _post(pid, body, created, r=0, c=0, s=0, poster="สมชาย"):
+    return {"post_id": pid, "poster_name": poster, "body": body,
             "created_at": created, "reaction_count": r, "comment_count": c,
             "share_count": s, "permalink": f"https://facebook.com/p/{pid}"}
 
@@ -95,7 +96,7 @@ def test_stats_window_and_keyword_dedupe():
     assert d7["total_posts"] == 3
     flash7 = next(k for k in d7["top_keywords"] if k["word"] == "flashsale")
     assert flash7["count"] == 2  # a + b
-    assert d7["top_posters"][0] == {"name": "สมชาย", "count": 3}
+    assert d7["top_posters"][0] == {"name": "สมชาย", "count": 3, "avg_engagement": 7.0}
     assert d7["top_posts"][0]["post_id"] == "c"  # engagement 9 สูงสุด
 
 
@@ -122,3 +123,99 @@ def test_stats_default_group_and_zero_state():
     assert d["group"] == "กลุ่มเป้าหมาย"
     assert d["total_posts"] == 0  # temp DB ไม่มีโพสต์ของ group นี้ → zero state
     assert d["top_keywords"] == []
+
+
+CONFIG_PATH = Path("config.toml")
+
+
+def _write_config(groups):
+    # (name, gid) — tests รันจาก repo root เท่านั้น
+    text = "".join(
+        f'[[groups]]\nname = "{name}"\nurl = "https://www.facebook.com/groups/{gid}"\n'
+        for name, gid in groups)
+    CONFIG_PATH.write_text(text, encoding="utf-8")
+
+
+def test_compare_all_groups_sov_and_sample_size():
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("g1", GID), ("g2", "456"), ("g3-empty", "789")])
+    try:
+        conn = init_db(api.DB)
+        upsert_posts(conn, "456", [
+            _post("d", "flashsale 20% ระวัง", _ts(20), 1, 0, 0),
+            _post("e", "เรื่องอื่น", _ts(50)),
+        ], FETCHED_AT)
+        conn.commit()
+        d = client.get("/stats/compare", params={"days": 2}).json()
+        assert d["total_posts"] == 3  # g1: a(30h)+b(2h) · g2: d(20h) · c/e อยู่นอก 2 วัน
+        g1 = next(g for g in d["groups"] if g["group_id"] == GID)
+        g2 = next(g for g in d["groups"] if g["group_id"] == "456")
+        g3 = next(g for g in d["groups"] if g["group_id"] == "789")
+        assert g1["sample_size"] == 2
+        assert abs(g1["share_of_voice"] - 2 / 3) < 1e-9
+        assert g1["avg_engagement"] == 6.0  # a=6 + b=6
+        assert g2["share_of_voice"] == 1 / 3
+        assert g3["sample_size"] == 0
+        assert g3["share_of_voice"] == 0.0  # กลุ่มว่าง → 0% ไม่ error
+        assert g3["avg_engagement"] == 0.0
+        assert g3["top_keywords"] == []
+        assert g1["keyword_delta"]["sample_size"] == {"first_half": 1, "second_half": 1}
+        fl = next(i for i in g1["keyword_delta"]["items"] if i["word"] == "flashsale")
+        assert (fl["first_half"], fl["second_half"]) == (1, 1)  # a=ก่อนกลาง, b=หลังกลาง
+        assert "flashsale" in {s["word"] for s in d["shared_keywords"]}  # g1 ∩ g2
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
+
+
+def test_compare_zero_posts_no_error():
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("empty-only", "778")])
+    try:
+        d = client.get("/stats/compare").json()
+        assert d["total_posts"] == 0
+        assert d["groups"][0]["share_of_voice"] == 0.0
+        assert d["shared_keywords"] == []
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
+
+
+def test_stats_top_posters_ranked_by_avg_engagement():
+    conn = init_db(api.DB)
+    upsert_posts(conn, "555", [
+        _post("big", "kol post", _ts(5), 50, 0, 0, poster="KOL"),
+        _post("y1", "y post", _ts(6), 1, 0, 0, poster="Y"),
+        _post("y2", "y post", _ts(7), 1, 0, 0, poster="Y"),
+    ], FETCHED_AT)
+    conn.commit()
+    d = client.get("/stats", params={"group_id": "555", "days": 7}).json()
+    # KOL โพสต์น้อยแต่ engagement ต่อโพสต์สูงกว่า Y (โพสต์เยอะ) → เรียงอันดับตาม influence
+    assert d["top_posters"][0] == {"name": "KOL", "count": 1, "avg_engagement": 50.0}
+    assert d["top_posters"][1] == {"name": "Y", "count": 2, "avg_engagement": 1.0}
+
+
+TL_GID = "666"
+BKK = timezone(timedelta(hours=7))
+
+
+def test_timeline_daily_buckets_bangkok():
+    bkk_now = datetime.now(timezone.utc).astimezone(BKK)
+    today0 = bkk_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    conn = init_db(api.DB)
+    upsert_posts(conn, TL_GID, [
+        _post("t1", "alpha beta", (today0 + timedelta(hours=1)).isoformat(), 5, 0, 0),
+        _post("t2", "alpha gamma", (today0 + timedelta(hours=2)).isoformat(), 1, 1, 0),
+        # 23:59 BKK = เมื่อวาน — ทั้งที่ใน UTC ยังเป็น "วันนี้" (กรณีข้ามเขตเวลา)
+        _post("t3", "delta", (today0 - timedelta(minutes=1)).isoformat(), 2, 0, 0),
+    ], FETCHED_AT)
+    conn.commit()
+    d = client.get("/stats/timeline", params={"days": 3, "group_id": TL_GID}).json()
+    assert d["timezone"] == "Asia/Bangkok"
+    assert len(d["buckets"]) == 3
+    assert [b["date"] for b in d["buckets"][-2:]] == [
+        (today0 - timedelta(days=1)).date().isoformat(),
+        today0.date().isoformat(),
+    ]
+    tb, yb = d["buckets"][-1], d["buckets"][-2]
+    assert (tb["posts"], tb["engagement"], tb["top_keyword"]) == (2, 7, "alpha")
+    assert (yb["posts"], yb["engagement"], yb["top_keyword"]) == (1, 2, "delta")
+    assert (d["buckets"][0]["posts"], d["buckets"][0]["top_keyword"]) == (0, None)

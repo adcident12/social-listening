@@ -8,7 +8,8 @@ from pathlib import Path
 
 from digest import build_digest
 from fetch import SessionExpired, capture_feed_html, fetch_group_posts, group_id_from_url, login
-from store import fetch_recent, init_db, upsert_posts
+from sentiment import analyze_text, get_provider
+from store import fetch_recent, init_db, pending_sentiment, save_sentiment, upsert_comments, upsert_posts
 
 DATA = Path("data")
 DB = DATA / "sl.db"
@@ -49,7 +50,18 @@ def cmd_monitor(cfg: dict, args) -> int:
         else:
             now = datetime.now(timezone.utc).isoformat()
             upsert_posts(conn, gid, posts, now)
+            upsert_comments(conn, gid, posts, now)
+            ok = sum(len(p.get("comments") or []) for p in posts)
+            failed = sum(p.get("comments_seen") or 0 for p in posts) - ok
             print(f"[{now}] fetched {len(posts)} posts for {group['name']}")
+            print(f"[{now}] comments: {ok} parsed / {failed} failed")
+            provider = get_provider()
+            if provider is not None:
+                pending = pending_sentiment(conn, gid)
+                for row in pending:
+                    save_sentiment(conn, gid, row["post_id"], analyze_text(row["body"], provider))
+                if pending:
+                    print(f"[{now}] analyzed {len(pending)} posts")
             if args.once:
                 return 0
         time.sleep(mon["interval_minutes"] * 60)

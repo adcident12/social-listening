@@ -117,6 +117,9 @@ BARE_COUNT_RE = re.compile(
 # ".... <see-more>" body ตัดบน feed / <show-less> เมื่อ expand แล้ว — DOM cps ตรวจแล้ว
 SEE_MORE_RE = re.compile(r"\u0e14\u0e39\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21")  # ดูเพิ่่มเติม
 SHOW_LESS_RE = re.compile(r"\u0e14\u0e39\u0e19\u0e49\u0e2d\u0e22\u0e25\u0e07")  # ดูน่อยลง
+# comment teaser (calibrate 2026-09-18 — synthetic fixture เท่านั้น, recalibrate บน capture จริงแรก)
+TEASER_MARKER = "\u0e14\u0e39\u0e04\u0e27\u0e32\u0e21\u0e04\u0e34\u0e14\u0e40\u0e2b\u0e47\u0e19\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21"  # ดูความคิดเห็นเพิ่่มเติม
+TEASER_REACTIONS_RE = re.compile(r"(\d+)\s+\u0e14\u0e39$")  # trailing "N ดู" = reaction ของคอมเมนต์
 # aria ของเมนูโพสต์: "การดำเนินการสำหรั บโพสต์นี้โดย <ชื่อ>" — แหล่งชื่อ poster ที่เชื่อถือได้
 ACTION_ARIA_RE = re.compile(
     r"(?:การดำเนินการ\S+โดย|Actions for (?:this|the) post by)\s*(.+)$", re.S)
@@ -280,6 +283,43 @@ def _first_time(text: str) -> str | None:
     return None
 
 
+def _parse_comment_teaser(text: str) -> tuple[int, list[dict]]:
+    """(comments_seen, comments) — teaser เป็นข้อความท้ายโพสต์ใน flat text
+    flat text แยกชื่อ/body ไม่ได้ → poster_name None, ชื่อติดหน้า body
+    ponytail: assume teaser เป็น segment สุดท้าย, recalibrate บน capture จริงแรก"""
+    i = text.find(TEASER_MARKER)
+    if i < 0:
+        return 0, []
+    seg = text[i + len(TEASER_MARKER):].strip()
+    m = TEASER_REACTIONS_RE.search(seg)
+    if m:
+        seg = seg[: m.start()].rstrip()
+        reactions = int(m.group(1))
+    else:
+        reactions = 0
+    time_label = None
+    words = seg.split()
+    for n in range(min(4, len(words)), 0, -1):
+        for j in range(len(words), n - 1, -1):
+            cand = " ".join(words[j - n:j])
+            if normalize_time(cand):
+                time_label = cand
+                break
+        if time_label:
+            break
+    if time_label:
+        seg = seg.rsplit(time_label, 1)[0]  # rightmost = เวลาของคอมเมนต์
+    body = " ".join(seg.split()).strip(" ,.")
+    if not body:
+        return 1, []  # มี marker แต่ตีความไม่ได้ — นับเป็น parse failed
+    return 1, [{
+        "poster_name": None,
+        "body": body,
+        "created_at": normalize_time(time_label) if time_label else None,
+        "reaction_count": reactions,
+    }]
+
+
 def _clean_body(text: str, poster: str | None, time_label: str | None) -> str:
     # ตัดที่จุดแรกสุดของ count block / ป้าย see-more, show-less / ป้ายท้ายโพสต์
     cuts = [m.start() for m in (REACTION_BLOCK_RE.search(text),
@@ -357,6 +397,7 @@ def _extract(raw: dict, group_id: str) -> dict | None:
     created_at = normalize_time(time_label) if time_label else None
     reactions, comments, shares = _counts(text)  # count อยู่ท้ายข้อความเต็ม
     body = _clean_body(head, poster, time_label)
+    comments_seen, teaser_comments = _parse_comment_teaser(text)
     if not poster or not (body or permalink):
         return None  # nav card / suggestion card — ตัด
     post_id = hashlib.sha1((permalink or f"{group_id}|{poster}|{body[:200]}").encode()).hexdigest()
@@ -369,6 +410,8 @@ def _extract(raw: dict, group_id: str) -> dict | None:
         "comment_count": comments,
         "share_count": shares,
         "permalink": permalink,
+        "comments": teaser_comments,
+        "comments_seen": comments_seen,
     }
 
 

@@ -1,16 +1,33 @@
 from __future__ import annotations
 
+import json
 import os
+import urllib.request
 from dataclasses import dataclass
 
 # Provider-agnostic sentiment seam — เลือก active provider ผ่าน SENTIMENT_PROVIDER (.env).
-# ยังไม่ implement HTTP จริงจนกว่าจะมี credentials: provider เป็น stub → classify raise → caller degrade เป็น NULL (skip เดิม)
+# HTTP จริงแล้ว (stdlib urllib) — ใช้เมื่อ creds ครบ, analyze_text degrade เป็น NULL ถ้าดับ
+
+PROMPT_VERSION = "1"
+_TEXT_LIMIT = 2000  # cost control — โพสต์ยาวตัดตรง (summary ไม่แม่นขึ้นอีกแล้ว)
+_LABELS = ("positive", "neutral", "negative")
+
+PROMPT = (
+    "Classify the social-media text below. Reply with ONLY minified JSON, no other words:\n"
+    '{"label":"positive|neutral|negative","summary":"one short sentence in the text language",'
+    '"theme":"price|product|promotion|other"}\n'
+    "theme = what the text is mainly discussing.\n"
+    "TEXT:\n"
+)
 
 
 @dataclass
 class SentimentResult:
-    label: str | None      # "positive" | "neutral" | "negative" | None
+    label: str | None        # "positive" | "neutral" | "negative" | None
     summary: str | None = None
+    theme: str | None = None  # "price" | "product" | "promotion" | "other" | None
+    model_version: str | None = None   # model ที่วิเคราะห์ (track comparability)
+    prompt_version: str | None = None  # PROMPT_VERSION ที่ใช้ (track comparability)
 
 
 class SentimentProvider:
@@ -19,6 +36,37 @@ class SentimentProvider:
 
     def classify(self, text: str) -> SentimentResult:
         raise NotImplementedError
+
+
+def _post_json(url: str, headers: dict, body: dict, timeout: int = 30) -> dict:
+    """HTTP seam — stdlib urllib · tests monkeypatch จุดนี้"""
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data,
+                                 headers={**headers, "Content-Type": "application/json"},
+                                 method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _parse_content(raw: str) -> dict:
+    raw = raw.strip()
+    if raw.startswith("```"):  # LLM บางตัวห่อ code fence — ถอดออก
+        raw = raw[3:]
+        if raw[:4].lstrip().lower().startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+        if raw.endswith("```"):
+            raw = raw[:-3].strip()
+    data = json.loads(raw)  # raise ValueError ถ้าไม่ JSON → analyze_text degrade NULL
+    label = data.get("label")
+    if label not in _LABELS:
+        raise ValueError(f"unexpected label: {label!r}")
+    return data
+
+
+def _result(content: str, model: str) -> SentimentResult:
+    data = _parse_content(content)
+    return SentimentResult(data["label"], data.get("summary"), data.get("theme"), model, PROMPT_VERSION)
 
 
 class OpenAICompatibleProvider(SentimentProvider):
@@ -31,8 +79,14 @@ class OpenAICompatibleProvider(SentimentProvider):
         self.model = model
 
     def classify(self, text: str) -> SentimentResult:
-        # ponytail: stub — implement HTTP (OpenAI-compatible /chat/completions) เมื่อมี credentials
-        raise NotImplementedError("openai_compatible not implemented until credentials available")
+        body = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": PROMPT + text[:_TEXT_LIMIT]}],
+            "temperature": 0,
+        }
+        resp = _post_json(f"{self.base_url}/chat/completions",
+                          {"Authorization": f"Bearer {self.api_key}"}, body)
+        return _result(resp["choices"][0]["message"]["content"], self.model)
 
 
 class AnthropicProvider(SentimentProvider):
@@ -44,8 +98,15 @@ class AnthropicProvider(SentimentProvider):
         self.model = model
 
     def classify(self, text: str) -> SentimentResult:
-        # ponytail: stub — implement HTTP (Anthropic /v1/messages) เมื่อมี credentials
-        raise NotImplementedError("anthropic not implemented until credentials available")
+        body = {
+            "model": self.model,
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": PROMPT + text[:_TEXT_LIMIT]}],
+        }
+        resp = _post_json("https://api.anthropic.com/v1/messages",
+                          {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}, body)
+        content = "".join(block.get("text", "") for block in resp.get("content", []))
+        return _result(content, self.model)
 
 
 def get_provider() -> SentimentProvider | None:
@@ -65,7 +126,7 @@ def get_provider() -> SentimentProvider | None:
 
 
 def analyze_text(text: str, provider: SentimentProvider | None = None) -> SentimentResult:
-    """Never raises — provider ไม่มี / ยังไม่ implement / ดับ → NULL (skip เดิม) · ไม่ fallback ข้าม provider"""
+    """Never raises — provider ไม่มี / ดับ / output พัง → NULL (skip เดิม) · ไม่ fallback ข้าม provider"""
     p = provider if provider is not None else get_provider()
     if p is None:
         return SentimentResult(None, None)

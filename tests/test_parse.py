@@ -99,3 +99,21 @@ def test_thai_unit_counts_and_see_more_cut():
     assert p["created_at"] == "2026-09-09T00:00:00+00:00"
     assert p["body"] == "ข่าวดีวันนี้"
     assert "ติดตาม" not in p["body"]
+
+def test_comment_teaser_parsed():
+    posts = parse_posts(FIXTURE, "123")
+    a = posts[0]
+    assert a["comments_seen"] == 1
+    assert len(a["comments"]) == 1
+    c = a["comments"][0]
+    assert c["poster_name"] is None  # flat text — no DOM to split name from body
+    assert c["body"].startswith("Nattapon Yongpaiboon")  # name glued to body
+    assert c["reaction_count"] == 2  # trailing "N ดู" = comment reactions
+    assert c["created_at"] is not None  # comment time
+    assert "Nattapon" not in a["body"]  # teaser must not leak into post body
+
+def test_posts_without_teaser_have_no_comments():
+    posts = parse_posts(FIXTURE, "123")
+    for p in posts[1:]:
+        assert p["comments"] == []
+        assert p["comments_seen"] == 0

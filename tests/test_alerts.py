@@ -115,7 +115,8 @@ def test_discord_payload_embed_shape():
            "created_at": "2026-09-19T00:00:00+00:00"}
     p = alerts.discord_payload("กลุ่ม", row, "negative")
     e = p["embeds"][0]
-    assert e["title"] == "negative — กลุ่ม"
+    assert e["title"] == "⚠️ มีคนพูดถึงแบรนด์คุณในแง่ลบ — ลองเข้าไปตอบดู"
+    assert {"name": "กลุ่ม", "value": "กลุ่ม", "inline": True} in e["fields"]
     assert e["description"] == "บริการนี่ แย่มาก"
     assert e["url"] == "https://x/n1"
     assert e["color"] == alerts.RULE_COLORS["negative"]

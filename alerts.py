@@ -9,6 +9,10 @@ from digest import _engagement, _watch_matches
 from store import fetch_recent
 
 RULE_COLORS = {"negative": 0xE53E3E, "brand_mention": 0x4287F5, "high_engagement": 0xFAA61A}
+RULE_TITLES = {
+    "negative": "⚠️ มีคนพูดถึงแบรนด์คุณในแง่ลบ — ลองเข้าไปตอบดู",
+    "high_engagement": "🔥 โพสต์นี้ engagement สูง — เหมาะจะตอบกลับหรือดันต่อ",
+}
 
 
 def _post(url: str, payload: dict) -> bool:
@@ -27,7 +31,8 @@ def _post(url: str, payload: dict) -> bool:
 
 def discord_payload(group_name: str, row: dict, rule: str, watch_words=()) -> dict:
     hits = _watch_matches(row["body"] or "", watch_words) if rule == "brand_mention" else []
-    title = f"{rule} — {group_name}" + (f" ({', '.join(hits)})" if hits else "")
+    title = ("📣 แบรนด์คุณถูกพูดถึง" + (f" ({', '.join(hits)})" if hits else "") + " — เข้าไปตอบขอบคุณได้เลย"
+             if rule == "brand_mention" else RULE_TITLES.get(rule, f"{rule} — {group_name}"))
     return {"embeds": [{
         "title": title,
         "description": " ".join((row["body"] or "").split())[:300],
@@ -35,6 +40,7 @@ def discord_payload(group_name: str, row: dict, rule: str, watch_words=()) -> di
         "color": RULE_COLORS.get(rule, 0x95A5A6),
         "timestamp": row.get("created_at") or datetime.now(timezone.utc).isoformat(),
         "fields": [
+            {"name": "กลุ่ม", "value": group_name, "inline": True},
             {"name": "ผู้โพสต์", "value": row.get("poster_name") or "—", "inline": True},
             {"name": "engagement", "value": str(_engagement(row)), "inline": True},
             {"name": "sentiment", "value": row.get("sentiment") or "—", "inline": True},

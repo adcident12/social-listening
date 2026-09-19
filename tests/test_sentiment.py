@@ -129,6 +129,15 @@ def test_provider_down_returns_null():
     assert analyze_text("hello", provider=Down()) == SentimentResult(None, None)
 
 
+def test_analyze_text_logs_failure(capsys):
+    class Down:
+        def classify(self, text):
+            raise RuntimeError("401 invalid api key")
+    r = analyze_text("hello", provider=Down())
+    assert r == SentimentResult(None, None)
+    assert "401 invalid api key" in capsys.readouterr().out  # เงียบไม่ได้ — ต้อง log เหตุผล
+
+
 def test_selected_provider_down_returns_null(monkeypatch):
     # provider ถูกเลือกแล้ว, transport ดับ → NULL ไม่ crash, ไม่ fallback
     _openai_env(monkeypatch)

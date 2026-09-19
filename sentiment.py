@@ -147,5 +147,6 @@ def analyze_text(text: str, provider: SentimentProvider | None = None) -> Sentim
         return SentimentResult(None, None)
     try:
         return p.classify(text)
-    except Exception:
+    except Exception as e:
+        print(f"sentiment failed: {e}")  # เงียบไม่ได้ — ต้องเห็นเหตุผล (401 / timeout / output พัง)
         return SentimentResult(None, None)

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from alerts import check_alerts
+from alerts import _post, check_alerts
 from digest import build_digest
 from fetch import SessionExpired, capture_feed_html, fetch_group_posts, group_id_from_url, login
 from sentiment import analyze_text, get_provider, load_dotenv
@@ -15,6 +16,33 @@ from store import fetch_recent, init_db, pending_sentiment, save_sentiment, upse
 
 DATA = Path("data")
 DB = DATA / "sl.db"
+
+SENTIMENT_FAIL_THRESHOLD = 5  # posts NULL สะสมถึงจุดนี้ → provider น่ามีปัญหา
+_sentiment_fail_streak = 0
+_sentiment_alerted = False  # incident เดิม alert 1 ครั้ง (กันสแปมทุก 30 นาที)
+
+def _discord_post(url: str, payload: dict) -> bool:
+    return _post(url, payload)
+
+def _note_sentiment_failures(failed: int, cfg: dict, now: str) -> None:
+    global _sentiment_fail_streak, _sentiment_alerted
+    if failed == 0:
+        _sentiment_fail_streak = 0
+        _sentiment_alerted = False
+        return
+    _sentiment_fail_streak += failed
+    if _sentiment_fail_streak >= SENTIMENT_FAIL_THRESHOLD and not _sentiment_alerted:
+        _sentiment_alerted = True
+        print(f"[{now}] sentiment provider อาจมีปัญหา — NULL สะสม {_sentiment_fail_streak} posts")
+        url = (cfg.get("alerts") or {}).get("webhook_url") or os.environ.get("DISCORD_WEBHOOK_URL", "")
+        if not url:
+            return  # ไม่มี webhook = log ต่อ monitor ก็พอ
+        _discord_post(url, {"embeds": [{
+            "title": "sentiment provider อาจมีปัญหา",
+            "description": f"NULL sentiment สะสม {_sentiment_fail_streak} posts ติดกัน (threshold {SENTIMENT_FAIL_THRESHOLD})",
+            "color": 0x95A5A6,
+            "timestamp": now,
+        }]})
 
 def _config() -> dict:
     with open("config.toml", "rb") as f:
@@ -52,12 +80,13 @@ def _monitor_group(conn, cfg: dict, group: dict, mon: dict) -> bool:
     print(f"[{now}] fetched {len(posts)} posts for {group['name']}")
     print(f"[{now}] comments: {ok} parsed / {failed_c} failed")
     provider = get_provider()
+    pending = pending_sentiment(conn, gid)
     if provider is not None:
-        pending = pending_sentiment(conn, gid)
         for row in pending:
             save_sentiment(conn, gid, row["post_id"], analyze_text(row["body"], provider))
         if pending:
             print(f"[{now}] analyzed {len(pending)} posts")
+    _note_sentiment_failures(len(pending_sentiment(conn, gid)), cfg, now)  # หลังวิเคราะห์ = NULL ที่ยังค้าง
     n = check_alerts(conn, gid, group["name"], cfg)
     if n:
         print(f"[{now}] alerts: {n} sent")

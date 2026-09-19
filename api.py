@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import re
@@ -10,7 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from store import fetch_recent, init_db
@@ -120,18 +122,9 @@ def health():
     return {"ok": True, "last_fetched": row[0]}
 
 
-@app.get("/posts")
-def list_posts(
-    q: str | None = None,
-    poster: str | None = None,
-    since: str | None = None,
-    until: str | None = None,
-    sort: str = Query("date", pattern="^(date|engagement)$"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    group_id: str | None = None,
-):
-    _, gid = _group_info(group_id)
+def _posts_where(gid: str, q: str | None, poster: str | None,
+                 since: str | None, until: str | None, sort: str) -> tuple[str, list, str]:
+    """(where_sql, params, order) — /posts กับ /export ใช้ filter เดียวกัน"""
     where, params = ["group_id = ?"], [gid]
     if q:
         where.append("body LIKE ?")
@@ -150,7 +143,22 @@ def list_posts(
                  "+COALESCE(share_count,0)) DESC, created_at DESC")
     else:
         order = "created_at DESC"
-    where_sql = " AND ".join(where)
+    return " AND ".join(where), params, order
+
+
+@app.get("/posts")
+def list_posts(
+    q: str | None = None,
+    poster: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    sort: str = Query("date", pattern="^(date|engagement)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    group_id: str | None = None,
+):
+    _, gid = _group_info(group_id)
+    where_sql, params, order = _posts_where(gid, q, poster, since, until, sort)
     with _ro() as conn:
         total = conn.execute(
             f"SELECT COUNT(*) FROM posts WHERE {where_sql}", params).fetchone()[0]
@@ -158,6 +166,37 @@ def list_posts(
             f"SELECT * FROM posts WHERE {where_sql} ORDER BY {order} LIMIT ? OFFSET ?",
             params + [limit, offset]).fetchall()
     return {"total": total, "posts": [_row_to_post(r) for r in rows]}
+
+
+@app.get("/export")
+def export_csv(
+    q: str | None = None,
+    poster: str | None = None,
+    sort: str = Query("date", pattern="^(date|engagement)$"),
+    group_id: str | None = None,
+):
+    """CSV ทุกแถวที่ match filter UI — BOM (utf-8-sig) ให้ Excel เปิดไทยไม่เพี้ยน"""
+    _, gid = _group_info(group_id)
+    where_sql, params, order = _posts_where(gid, q, poster, None, None, sort)
+    with _ro() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM posts WHERE {where_sql} ORDER BY {order}", params).fetchall()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["post_id", "created_at", "poster_name", "body", "permalink",
+                "reactions", "comments", "shares", "sentiment", "summary", "keywords"])
+    for r in rows:
+        kws = json.loads(r["keywords"]) if r["keywords"] else []
+        w.writerow([r["post_id"], r["created_at"], r["poster_name"], r["body"],
+                    r["permalink"], r["reaction_count"] or 0, r["comment_count"] or 0,
+                    r["share_count"] or 0, r["sentiment"] or "", r["summary"] or "",
+                    "; ".join(kws)])
+    return Response(
+        content=b"\xef\xbb\xbf" + buf.getvalue().encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="posts-{datetime.now():%Y-%m-%d}.csv"'},
+    )
 
 
 @app.get("/posts/{post_id}")

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
-import { type PostsResponse } from "@/lib/api";
+import { API, type PostsResponse } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
 import { timeAgo, fullDateTime } from "@/lib/format";
 
@@ -76,6 +76,13 @@ export default function PostList() {
           <option value="date">ล่าสุดก่อน</option>
           <option value="engagement">engagement สูงสุด</option>
         </select>
+        <a
+          href={`${API}/export?${qs}`}
+          download
+          className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm transition-colors hover:bg-neutral-50"
+        >
+          Export CSV
+        </a>
         <span className="ml-auto text-sm tabular-nums text-neutral-500">
           {data?.total ?? 0} โพสต์
         </span>

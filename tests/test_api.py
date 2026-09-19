@@ -76,6 +76,30 @@ def test_posts_pagination_date_desc():
     assert [p["post_id"] for p in d["posts"]] == ["a", "c"]
 
 
+def test_export_csv_headers_and_thai():
+    r = client.get("/export", params={"group_id": GID})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    cd = r.headers["content-disposition"]
+    assert cd.startswith('attachment; filename="posts-')
+    assert cd.endswith(".csv\"")  # RFC 6266 — filename ใน quotes
+    text = r.content.decode("utf-8-sig")  # BOM strip — Excel เปิดไทยไม่เพี้ยน
+    assert text.splitlines()[0] == (
+        "post_id,created_at,poster_name,body,permalink,"
+        "reactions,comments,shares,sentiment,summary,keywords")
+    assert "สมชาย" in text
+    assert "flashsale 50%" in text
+    assert len(text.splitlines()) == 4  # header + 3 posts
+
+
+def test_export_respects_q_and_sort_no_pagination():
+    r = client.get("/export", params={"group_id": GID, "q": "flashsale", "sort": "engagement"})
+    lines = r.content.decode("utf-8-sig").splitlines()
+    assert len(lines) == 3  # header + a, b — c (ไม่มี flashsale) หลุด
+    assert lines[1].startswith("b,")  # b=6 ใหม่กว่า a=6 → engagement tie = ใหม่ก่อน
+    assert lines[2].startswith("a,")
+
+
 def test_detail_ok():
     p = client.get("/posts/c", params={"group_id": GID}).json()
     assert p["post_id"] == "c"

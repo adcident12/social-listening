@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 import pythainlp
@@ -30,18 +31,37 @@ def _engagement(r: dict) -> int:
     return (r["reaction_count"] or 0) + (r["comment_count"] or 0) + (r.get("share_count") or 0)
 
 
-def _line(r: dict, with_summary: bool = False) -> str:
+def _line(r: dict, with_summary: bool = False, extra: str = "") -> str:
     eng = _engagement(r)
     snippet = " ".join((r["body"] or "").split())[:120]
     line = (f"- [{eng}] {r['created_at'] or '—'} — {r['poster_name']}: "
-            f"{snippet} {r['permalink'] or ''}")
+            f"{extra}{snippet} {r['permalink'] or ''}")
     if with_summary and r.get("summary"):
         line += f" (สรุป: {r['summary']})"
     return line
 
 
+def _watch_matches(text: str, words) -> list[str]:
+    # ponytail: ASCII word จับ boundary เฉพาะตัว ASCII → "ใช้AI" ยัง match
+    # (แต่ "said" ไม่ match "ai"); คำไทยจับ substring — ขยับไป fuzzy/NER ถ้าคำ brand สะกดต่าง
+    if not words or not text:
+        return []
+    low = text.lower()
+    hits = []
+    for w in words:
+        if not w:
+            continue
+        if w.isascii():
+            if re.search(rf"(?<![a-z0-9]){re.escape(w.lower())}(?![a-z0-9])", low):
+                hits.append(w)
+        elif w.lower() in low:
+            hits.append(w)
+    return hits
+
+
 def build_digest(rows: list[dict], days: int,
-                 top_n_keywords: int, top_n_posts: int) -> str:
+                 top_n_keywords: int, top_n_posts: int,
+                 watch_words=()) -> str:
     lines = [f"# Group listening digest — last {days} days",
              f"Posts in range: {len(rows)}"]
     if not rows:
@@ -78,5 +98,12 @@ def build_digest(rows: list[dict], days: int,
         lines += ["", "## โพสต์ลบเด่น"]
         lines += [_line(r, with_summary=True) for r in
                   sorted(negatives, key=_engagement, reverse=True)[:top_n_posts]]
+
+    if watch_words:
+        mentions = [(r, _watch_matches(r.get("body") or "", watch_words)) for r in rows]
+        mentions = [(r, h) for r, h in mentions if h]
+        if mentions:
+            lines += ["", "## Brand mentions"]
+            lines += [_line(r, extra=f"(ตรง: {', '.join(h)}) ") for r, h in mentions]
 
     return "\n".join(lines)

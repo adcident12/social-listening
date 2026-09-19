@@ -10,3 +10,6 @@ headless         = true
 [digest]
 top_n_keywords = 15
 top_n_posts    = 10
+
+[watch]
+words = []

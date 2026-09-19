@@ -62,3 +62,39 @@ def test_notable_negative_section():
     line = [l for l in section.splitlines() if l.startswith("- ")][0]
     assert "x/3" in line  # B post engagement 27 สูงสุด
     assert "(สรุป: บ่นเรื่องโค้ด)" in line
+
+
+WATCH_ROWS = [
+    {"body": "ใช้ Claude เขียนโค้ด แล้วส่ง AI ตรวจ", "poster_name": "C",
+     "reaction_count": 1, "comment_count": 0,
+     "created_at": "2026-09-14T11:00:00+00:00", "permalink": "https://x/4"},
+    {"body": "I said no to that", "poster_name": "D",
+     "reaction_count": 0, "comment_count": 0,
+     "created_at": "2026-09-13T10:00:00+00:00", "permalink": "https://x/5"},
+]
+
+
+def test_watch_word_section():
+    md = build_digest(WATCH_ROWS, 7, 5, 3, ["AI", "Claude"])
+    section = md.split("## Brand mentions")[1].split("##")[0]
+    assert "(ตรง: AI, Claude)" in section  # คำใน order ของ config
+    assert "x/4" in section
+    assert "x/5" not in section  # "said" มี "ai" แทรก — word boundary กัน
+
+
+def test_watch_ascii_attached_to_thai_matches():
+    rows = [{"body": "สั่งกาแฟ AI มาหนึ่งแก้ว", "poster_name": "E",
+             "reaction_count": 0, "comment_count": 0,
+             "created_at": "2026-09-13T10:00:00+00:00", "permalink": "https://x/6"}]
+    md = build_digest(rows, 7, 5, 3, ["ai"])
+    assert "## Brand mentions" in md  # ไม่มี space ระหว่างไทย-ASCII → ยังต้อง match
+
+
+def test_watch_no_match_no_section():
+    md = build_digest(ROWS, 7, 5, 3, ["กาแฟ"])
+    assert "Brand mentions" not in md
+
+
+def test_watch_no_words_no_section():
+    md = build_digest(ROWS, 7, 5, 3)  # ไม่ส่ง watch_words — backward compatible
+    assert "Brand mentions" not in md

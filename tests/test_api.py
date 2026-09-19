@@ -291,3 +291,147 @@ def test_timeline_daily_buckets_bangkok():
     assert (tb["posts"], tb["engagement"], tb["top_keyword"]) == (2, 7, "alpha")
     assert (yb["posts"], yb["engagement"], yb["top_keyword"]) == (1, 2, "delta")
     assert (d["buckets"][0]["posts"], d["buckets"][0]["top_keyword"]) == (0, None)
+
+
+# --- /summary — rule-based "สรุปวันนี้" (ทดสอบรันท้ายไฟล์: ใช้ DELETE FROM posts คุม DB ล้วน) ---
+
+SUM_GID = "777"
+
+
+def _fresh_db():
+    conn = init_db(api.DB)
+    conn.execute("DELETE FROM posts")
+    conn.commit()
+    return conn
+
+
+def test_summary_system_ok_negative_keyword_ai_info():
+    conn = _fresh_db()
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("ทดสอบ", SUM_GID)])
+    fresh = _ts(0.05)
+    try:
+        posts = [
+            _post("n1", "ราคาแพงมาก", _ts(30), 10, 2, 0),
+            _post("n2", "ราคา คุ้มมั้ย", _ts(10), 5, 0, 0),
+            # gpu: first_half=2 (120h, 100h) second_half=4 (60h,50h,30h,1h) → +100%
+            _post("k1", "gpu รุ่นเก่า", _ts(120)),
+            _post("k2", "gpu ตัวเดิม", _ts(100)),
+            _post("k3", "gpu ลดแล้ว", _ts(60)),
+            _post("k4", "gpu ถูกดี", _ts(50)),
+            _post("k5", "gpu ซื้อเลย", _ts(30)),
+            _post("k6", "gpu มาแล้ว", _ts(1)),
+            # newword: ครึ่งหลัง 3 ครั้ง ครึ่งแรก 0 → คำใหม่
+            _post("nw1", "newword ตัวนี้", _ts(70)),
+            _post("nw2", "newword ตัวนี้", _ts(40)),
+            _post("nw3", "newword ตัวนี้", _ts(20)),
+            # beta: 1 → 2 (+100% แต่ไม่ถึง floor 3 ครั้ง) → ไม่ขึ้น
+            _post("b1", "beta อย่างเดียว", _ts(120)),
+            _post("b2", "beta อีกที", _ts(60)),
+            _post("b3", "beta ซ้ำ", _ts(50)),
+        ]
+        upsert_posts(conn, SUM_GID, posts, fresh)
+        save_sentiment(conn, SUM_GID, "n1", SentimentResult("negative", "บ่นราคา", "price", "m", "1"))
+        save_sentiment(conn, SUM_GID, "n2", SentimentResult("negative", "ถามความคุ้ม", "price", "m", "1"))
+        conn.commit()
+        d = client.get("/summary", params={"days": 7}).json()
+        assert d["days"] == 7
+        assert d["last_fetched"] == fresh
+        items = d["items"]
+        # system — fresh (upsert ตอนนี้) → ok
+        assert items[0]["type"] == "system"
+        assert items[0]["severity"] == "ok"
+        assert "ปกติ" in items[0]["text"]
+        # negative — รวม theme "price" 2 โพสต์, href = permalink โพสต์ engagement สูงสุด
+        neg = [i for i in items if i["type"] == "negative"]
+        assert len(neg) == 1
+        assert "price" in neg[0]["text"] and "2" in neg[0]["text"]
+        assert neg[0]["severity"] == "high"
+        assert neg[0]["href"] == "https://facebook.com/p/n1"
+        # keyword — gpu +100% · newword คำใหม่ · beta หลุด floor
+        kw = [i for i in items if i["type"] == "keyword"]
+        assert any("gpu" in i["text"] and "100%" in i["text"] for i in kw)
+        assert any("newword" in i["text"] for i in kw)
+        assert all("beta" not in i["text"] for i in kw)
+        # ai — ค้าง 12 โพสต์ เก่าสุด 120h (>1h grace) แต่ analyzed ล่าสุด 10h (<24h) → info
+        ai = [i for i in items if i["type"] == "ai"]
+        assert len(ai) == 1
+        assert ai[0]["severity"] == "info"
+        assert "12" in ai[0]["text"]
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
+
+
+def test_summary_ai_stopped_warn():
+    conn = _fresh_db()
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("ทดสอบ", SUM_GID)])
+    try:
+        upsert_posts(conn, SUM_GID, [
+            _post("ok", "โพสต์ปกติ", _ts(100)),
+            _post("p1", "รอวิเคราะห์", _ts(30)),
+            _post("p2", "รออีก", _ts(20)),
+            _post("p3", "รออีกที", _ts(10)),
+        ], _ts(0.05))
+        save_sentiment(conn, SUM_GID, "ok", SentimentResult("positive", "ดี", "other", "m", "1"))
+        conn.commit()
+        d = client.get("/summary", params={"days": 7}).json()
+        ai = [i for i in d["items"] if i["type"] == "ai"]
+        assert len(ai) == 1
+        assert ai[0]["severity"] == "warn"  # analyzed ล่าสุด 100h > 24h → หยุดทำงาน
+        assert "3" in ai[0]["text"] and "รอวิเคราะห์" in ai[0]["text"]
+        assert "4 วันที่แล้ว" in ai[0]["text"]  # 100h → _ago
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
+
+
+def test_summary_ai_grace_no_line_for_fresh_pending():
+    conn = _fresh_db()
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("ทดสอบ", SUM_GID)])
+    try:
+        upsert_posts(conn, SUM_GID, [
+            _post("ok", "วิเคราะห์แล้ว", _ts(50)),
+            _post("fresh1", "ใหม่ ยังทัน grace", _ts(0.5)),
+            _post("fresh2", "ใหม่ 30 นาที", _ts(0.2)),
+        ], _ts(0.05))
+        save_sentiment(conn, SUM_GID, "ok", SentimentResult("neutral", "กลาง", "other", "m", "1"))
+        conn.commit()
+        d = client.get("/summary", params={"days": 7}).json()
+        # pending ค้างอยู่แต่ใหม่ทั้งหมด (<1h) → ยังไม่สรุป = ไม่ขึ้น line ai
+        assert all(i["type"] != "ai" for i in d["items"])
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
+
+
+def test_summary_zero_state():
+    conn = _fresh_db()
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("ทดสอบ", SUM_GID)])
+    try:
+        d = client.get("/summary", params={"days": 7}).json()
+        assert d["last_fetched"] is None
+        assert len(d["items"]) == 1
+        assert d["items"][0]["severity"] == "alert"
+        assert "ยังไม่มีข้อมูล" in d["items"][0]["text"]
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
+
+
+def test_summary_stale_monitor():
+    conn = _fresh_db()
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("ทดสอบ", SUM_GID)])
+    try:
+        upsert_posts(conn, SUM_GID, [_post("old", "โพสต์เก่า", _ts(100))], _ts(48))
+        conn.commit()
+        d = client.get("/summary", params={"days": 7}).json()
+        assert d["items"][0]["severity"] == "alert"
+        assert "หยุดอัปเดต" in d["items"][0]["text"]
+        assert "2 วันที่แล้ว" in d["items"][0]["text"]
+        upsert_posts(conn, SUM_GID, [_post("new", "ใหม่", _ts(1))], _ts(0.05))
+        conn.commit()
+        d = client.get("/summary", params={"days": 7}).json()
+        assert d["items"][0]["severity"] == "ok"
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")

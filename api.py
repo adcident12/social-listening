@@ -341,6 +341,103 @@ def stats_compare(days: int = Query(7, ge=1, le=90)):
     }
 
 
+def _ago(iso: str | None) -> str:
+    """ISO UTC → Thai time-ago — 1 string ที่ใช้ทั้ง /summary และ frontend badge"""
+    if not iso:
+        return "—"
+    mins = max(0, int((datetime.now(timezone.utc)
+                       - datetime.fromisoformat(iso)).total_seconds() // 60))
+    if mins < 60:
+        return f"{mins} นาทีที่แล้ว"
+    if mins < 60 * 24:
+        return f"{mins // 60} ชม.ที่แล้ว"
+    return f"{mins // 60 // 24} วันที่แล้ว"
+
+
+@app.get("/summary", responses=R_ERR)
+def summary(days: int = Query(7, ge=1, le=90)):
+    # rule-based "สรุปวันนี้" — ประโยคสำเร็จรูป + severity, ไร้ LLM (spec item 4)
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    with _ro() as conn:
+        last = conn.execute("SELECT MAX(fetched_at) FROM posts").fetchone()[0]
+        last_analyzed = conn.execute(
+            "SELECT MAX(created_at) FROM posts WHERE sentiment IS NOT NULL").fetchone()[0]
+        oldest_pending = conn.execute(
+            "SELECT MIN(created_at) FROM posts WHERE sentiment IS NULL").fetchone()[0]
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE sentiment IS NULL").fetchone()[0]
+        raw = [(name, gid, fetch_recent(conn, gid, since.isoformat()))
+               for name, gid in _all_groups()]
+
+    items: list[dict] = []
+    # 1) monitor freshness — last_fetched เด่นสุด (item 3)
+    if last is None:
+        items.append({"type": "system", "severity": "alert",
+                      "text": "🔴 ยังไม่มีข้อมูลในระบบ — monitor ยังไม่ได้ run", "href": None})
+    else:
+        age = (now - datetime.fromisoformat(last)).total_seconds()
+        if age <= 3600:
+            items.append({"type": "system", "severity": "ok",
+                          "text": f"✅ ระบบทำงานปกติ อัปเดตล่าสุด {_ago(last)}", "href": None})
+        elif age <= 86400:
+            items.append({"type": "system", "severity": "warn",
+                          "text": f"🟡 Monitor ไม่ได้อัปเดต {_ago(last)} — ควรเช็ค", "href": None})
+        else:
+            items.append({"type": "system", "severity": "alert",
+                          "text": f"🔴 Monitor หยุดอัปเดต {_ago(last)}", "href": None})
+
+    win = "สัปดาห์นี้" if days == 7 else f"ในช่วง {days} วันล่าสุด"
+    mid = since + (now - since) / 2
+    for name, gid, rows in raw:
+        # 2) โพสต์เชิงลบ — รวม theme, top 3 themes, href = permalink engagement สูงสุด
+        by_theme: dict[str, list[dict]] = {}
+        for r in rows:
+            if r["sentiment"] == "negative":
+                by_theme.setdefault(r["theme"] or "other", []).append(r)
+        for theme, posts in sorted(by_theme.items(), key=lambda kv: -len(kv[1]))[:3]:
+            top = max(posts, key=lambda r: (r["reaction_count"] or 0)
+                      + (r["comment_count"] or 0) + (r["share_count"] or 0))
+            items.append({"type": "negative", "severity": "high",
+                          "text": f"🔴 {name}: มี {len(posts)} โพสต์เชิงลบเกี่ยวกับ "
+                                  f"{theme} — ควรเข้าไปดู",
+                          "href": top["permalink"]})
+        # 3) keyword พุ่ง — half-window (สูตรเดียวกับ _compare_block): ครึ่งหลัง ≥3 ครั้ง และ ≥2× ครึ่งแรก
+        first_kw: Counter = Counter()
+        second_kw: Counter = Counter()
+        for r in rows:
+            kws = json.loads(r["keywords"]) if r["keywords"] else []
+            half = first_kw if datetime.fromisoformat(
+                r["created_at"] or r["fetched_at"]) < mid else second_kw
+            half.update(kws)
+        for w, s in second_kw.most_common(15):
+            f = first_kw[w]
+            if s < 3 or s < 2 * f:
+                continue
+            if f:
+                text = f"📈 {name}: '{w}' ถูกพูดถึงเพิ่มขึ้น {round((s - f) / f * 100)}% {win}"
+            else:
+                text = f"📈 {name}: '{w}' เป็นคำใหม่ที่กำลังร้อน ({s} ครั้ง)"
+            items.append({"type": "keyword", "severity": "info", "text": text, "href": None})
+
+    # 4) AI สถานะ — DB-only (API process แยกจาก monitor) · grace 1h สำหรับโพสต์ใหม่ระหว่างรอบ
+    if pending and oldest_pending and \
+            (now - datetime.fromisoformat(oldest_pending)).total_seconds() > 3600:
+        if last_analyzed is None:
+            items.append({"type": "ai", "severity": "warn",
+                          "text": f"⚠️ AI วิเคราะห์อารมณ์ยังไม่เคย run — "
+                                  f"มี {pending} โพสต์รอวิเคราะห์", "href": None})
+        elif (now - datetime.fromisoformat(last_analyzed)).total_seconds() > 86400:
+            items.append({"type": "ai", "severity": "warn",
+                          "text": f"⚠️ AI วิเคราะห์อารมณ์หยุดทำงาน {_ago(last_analyzed)} — "
+                                  f"มี {pending} โพสต์รอวิเคราะห์", "href": None})
+        else:
+            items.append({"type": "ai", "severity": "info",
+                          "text": f"ℹ️ มี {pending} โพสต์ยังไม่ได้วิเคราะห์", "href": None})
+
+    return {"days": days, "last_fetched": last, "items": items}
+
+
 @app.get("/stats/timeline", responses=R_ERR)
 def stats_timeline(days: int = Query(30, ge=1, le=90), group_id: str | None = None):
     name, gid = _group_info(group_id)

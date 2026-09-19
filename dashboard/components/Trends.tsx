@@ -14,6 +14,14 @@ const SENTIMENT_STYLE: Record<string, { cls: string; label: string }> = {
   unanalyzed: { cls: "bg-amber-100 text-amber-800", label: "ยังไม่ได้วิเคราะห์" },
 };
 
+function freshnessBadge(iso: string | null): { cls: string; dot: string } {
+  if (!iso) return { cls: "bg-red-100 text-red-800", dot: "🔴" };
+  const mins = (Date.now() - new Date(iso).getTime()) / 60_000;
+  if (mins <= 60) return { cls: "bg-emerald-100 text-emerald-800", dot: "🟢" };
+  if (mins <= 1440) return { cls: "bg-yellow-100 text-yellow-800", dot: "🟡" };
+  return { cls: "bg-red-100 text-red-800", dot: "🔴" };
+}
+
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-4">
@@ -54,9 +62,12 @@ export default function Trends() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{data.group}</h1>
-          <p className="text-sm text-neutral-500">
-            อัปเดตล่าสุด {timeAgo(data.last_fetched)}
-          </p>
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${freshnessBadge(data.last_fetched).cls}`}
+          >
+            {freshnessBadge(data.last_fetched).dot} อัปเดตล่าสุด{" "}
+            {timeAgo(data.last_fetched)}
+          </span>
         </div>
         <div className="flex rounded-lg border border-neutral-200 bg-white p-0.5">
           {DAYS.map((d) => (

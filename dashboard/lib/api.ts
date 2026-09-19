@@ -67,6 +67,19 @@ export type TimelineBucket = {
   top_keyword: string | null;
 };
 
+export type SummaryItem = {
+  type: "system" | "negative" | "keyword" | "ai";
+  severity: "ok" | "warn" | "alert" | "high" | "info";
+  text: string;
+  href: string | null;
+};
+
+export type Summary = {
+  days: number;
+  last_fetched: string | null;
+  items: SummaryItem[];
+};
+
 export type TimelineResponse = {
   group: string;
   days: number;

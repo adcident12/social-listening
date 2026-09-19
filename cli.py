@@ -23,7 +23,7 @@ def _config() -> dict:
 def _fetch_with_retry(group: dict, pages: int, headless: bool) -> list[dict]:
     try:
         return fetch_group_posts(group, pages=pages, headless=headless)
-    except Exception as e:  # noqa: BLE001 — network/DOM error ทั้งหมดพักแล้วลองใหม่
+    except Exception as e:  # network/DOM error ทั้งหมดพักแล้วลองใหม่
         print(f"fetch failed: {e} — retry in 5 min")
         time.sleep(300)
         return fetch_group_posts(group, pages=pages, headless=headless)  # ล้มอีก = throw ให้ caller
@@ -34,40 +34,47 @@ def cmd_login(cfg: dict, args) -> int:
     print("login OK — profile saved to data/browser-profile")
     return 0
 
+def _monitor_group(conn, cfg: dict, group: dict, mon: dict) -> bool:
+    """fetch+save 1 กลุ่ม — True = round พัง (SessionExpired ยัง raise ผ่านไปให้ caller)"""
+    gid = group_id_from_url(group["url"])
+    try:
+        posts = _fetch_with_retry(group, mon["pages_per_run"], mon.get("headless", True))
+    except SessionExpired:
+        raise
+    except Exception as e:  # retry พังด้วย → ข้ามกลุ่มนี้ (spec §9)
+        print(f"round skipped for {group['name']}: {e}")
+        return True
+    now = datetime.now(timezone.utc).isoformat()
+    upsert_posts(conn, gid, posts, now)
+    upsert_comments(conn, gid, posts, now)
+    ok = sum(len(p.get("comments") or []) for p in posts)
+    failed_c = sum(p.get("comments_seen") or 0 for p in posts) - ok
+    print(f"[{now}] fetched {len(posts)} posts for {group['name']}")
+    print(f"[{now}] comments: {ok} parsed / {failed_c} failed")
+    provider = get_provider()
+    if provider is not None:
+        pending = pending_sentiment(conn, gid)
+        for row in pending:
+            save_sentiment(conn, gid, row["post_id"], analyze_text(row["body"], provider))
+        if pending:
+            print(f"[{now}] analyzed {len(pending)} posts")
+    n = check_alerts(conn, gid, group["name"], cfg)
+    if n:
+        print(f"[{now}] alerts: {n} sent")
+    return False
+
 def cmd_monitor(cfg: dict, args) -> int:
-    groups = cfg["groups"]
     mon = cfg["monitor"]
     conn = init_db(DB)
     while True:
         failed = False
-        for group in groups:
-            gid = group_id_from_url(group["url"])
+        for group in cfg["groups"]:
             try:
-                posts = _fetch_with_retry(group, mon["pages_per_run"], mon.get("headless", True))
+                if _monitor_group(conn, cfg, group, mon):
+                    failed = True
             except SessionExpired:
                 print("session expired — run: python cli.py login")
                 return 1
-            except Exception as e:  # noqa: BLE001 — retry พังด้วย → ข้ามกลุ่มนี้ (spec §9)
-                print(f"round skipped for {group['name']}: {e}")
-                failed = True
-            else:
-                now = datetime.now(timezone.utc).isoformat()
-                upsert_posts(conn, gid, posts, now)
-                upsert_comments(conn, gid, posts, now)
-                ok = sum(len(p.get("comments") or []) for p in posts)
-                failed_c = sum(p.get("comments_seen") or 0 for p in posts) - ok
-                print(f"[{now}] fetched {len(posts)} posts for {group['name']}")
-                print(f"[{now}] comments: {ok} parsed / {failed_c} failed")
-                provider = get_provider()
-                if provider is not None:
-                    pending = pending_sentiment(conn, gid)
-                    for row in pending:
-                        save_sentiment(conn, gid, row["post_id"], analyze_text(row["body"], provider))
-                    if pending:
-                        print(f"[{now}] analyzed {len(pending)} posts")
-                n = check_alerts(conn, gid, group["name"], cfg)
-                if n:
-                    print(f"[{now}] alerts: {n} sent")
         if args.once:
             return 1 if failed else 0
         time.sleep(mon["interval_minutes"] * 60)

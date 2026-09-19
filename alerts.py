@@ -21,7 +21,7 @@ def _post(url: str, payload: dict) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return 200 <= r.status < 300
-    except Exception:  # noqa: BLE001 — network/429 → ไม่ log, retry รอบ monitor ถัดไป
+    except Exception:  # network/429 → ไม่ log, retry รอบ monitor ถัดไป
         return False
 
 

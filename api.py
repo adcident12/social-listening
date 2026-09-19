@@ -32,6 +32,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# S8415 — document HTTPException ที่แต่ละ route raise ได้
+R_500 = {500: {"description": "no group id in config url"}}
+R_503 = {503: {"description": "db busy"}}
+R_ERR = {**R_500, **R_503}
+R_NOT_FOUND = {404: {"description": "post not found"}, **R_ERR}
+
 
 def _gid_from_url(url: str) -> str:
     # pattern เดียวกับ fetch.group_id_from_url — ไม่ import fetch เพราะลาก playwright มาด้วย
@@ -77,7 +83,7 @@ def _poster_influence(rows: list[dict]) -> list[tuple[str, int, float]]:
     return [(n, c, round(t / c, 2)) for n, (c, t) in ranked[:10]]
 
 
-@app.get("/groups")
+@app.get("/groups", responses=R_500)
 def groups():
     return {"groups": [{"name": n, "group_id": g} for n, g in _all_groups()]}
 
@@ -115,7 +121,7 @@ def _row_to_post(r) -> dict:
     }
 
 
-@app.get("/health")
+@app.get("/health", responses=R_503)
 def health():
     with _ro() as conn:
         row = conn.execute("SELECT MAX(fetched_at) FROM posts").fetchone()
@@ -146,7 +152,7 @@ def _posts_where(gid: str, q: str | None, poster: str | None,
     return " AND ".join(where), params, order
 
 
-@app.get("/posts")
+@app.get("/posts", responses=R_ERR)
 def list_posts(
     q: str | None = None,
     poster: str | None = None,
@@ -168,7 +174,7 @@ def list_posts(
     return {"total": total, "posts": [_row_to_post(r) for r in rows]}
 
 
-@app.get("/export")
+@app.get("/export", responses=R_ERR)
 def export_csv(
     q: str | None = None,
     poster: str | None = None,
@@ -199,7 +205,7 @@ def export_csv(
     )
 
 
-@app.get("/posts/{post_id}")
+@app.get("/posts/{post_id}", responses=R_NOT_FOUND)
 def get_post(post_id: str, group_id: str | None = None):
     _, gid = _group_info(group_id)
     with _ro() as conn:
@@ -210,7 +216,7 @@ def get_post(post_id: str, group_id: str | None = None):
     return _row_to_post(r)
 
 
-@app.get("/stats")
+@app.get("/stats", responses=R_ERR)
 def stats(days: int = Query(7, ge=1, le=90), group_id: str | None = None):
     name, gid = _group_info(group_id)
     now = datetime.now(timezone.utc)
@@ -298,7 +304,7 @@ def _compare_block(name: str, gid: str, rows: list[dict],
     }
 
 
-@app.get("/stats/compare")
+@app.get("/stats/compare", responses=R_ERR)
 def stats_compare(days: int = Query(7, ge=1, le=90)):
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=days)
@@ -335,7 +341,7 @@ def stats_compare(days: int = Query(7, ge=1, le=90)):
     }
 
 
-@app.get("/stats/timeline")
+@app.get("/stats/timeline", responses=R_ERR)
 def stats_timeline(days: int = Query(30, ge=1, le=90), group_id: str | None = None):
     name, gid = _group_info(group_id)
     now = datetime.now(timezone.utc)

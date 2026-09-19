@@ -6,6 +6,7 @@ import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from alerts import check_alerts
 from digest import build_digest
 from fetch import SessionExpired, capture_feed_html, fetch_group_posts, group_id_from_url, login
 from sentiment import analyze_text, get_provider, load_dotenv
@@ -62,6 +63,9 @@ def cmd_monitor(cfg: dict, args) -> int:
                     save_sentiment(conn, gid, row["post_id"], analyze_text(row["body"], provider))
                 if pending:
                     print(f"[{now}] analyzed {len(pending)} posts")
+            n = check_alerts(conn, gid, group["name"], cfg)
+            if n:
+                print(f"[{now}] alerts: {n} sent")
             if args.once:
                 return 0
         time.sleep(mon["interval_minutes"] * 60)

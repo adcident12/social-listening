@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS comments (
     PRIMARY KEY (comment_id, group_id)
 );
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments (post_id, group_id);
+CREATE TABLE IF NOT EXISTS alerts (
+    post_id TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    fired_at TEXT NOT NULL,
+    UNIQUE (post_id, rule)
+);
 """
 
 def init_db(db_path: str | Path) -> sqlite3.Connection:

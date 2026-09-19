@@ -13,3 +13,10 @@ top_n_posts    = 10
 
 [watch]
 words = []
+
+[alerts]
+enabled = true
+webhook_url = ""            # fallback: DISCORD_WEBHOOK_URL ใน .env (secret — ห้าม commit)
+rules = ["negative", "brand_mention", "high_engagement"]
+min_engagement = 100
+cooldown_minutes = 60

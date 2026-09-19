@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 import tomllib
 from datetime import datetime, timedelta, timezone
@@ -34,55 +35,56 @@ def cmd_login(cfg: dict, args) -> int:
     return 0
 
 def cmd_monitor(cfg: dict, args) -> int:
-    group = cfg["groups"][0]
-    gid = group_id_from_url(group["url"])
+    groups = cfg["groups"]
     mon = cfg["monitor"]
     conn = init_db(DB)
     while True:
-        try:
-            posts = _fetch_with_retry(group, mon["pages_per_run"], mon.get("headless", True))
-        except SessionExpired:
-            print("session expired — run: python cli.py login")
-            return 1
-        except Exception as e:  # noqa: BLE001 — retry พังด้วย → ข้ามรอบ (spec §9)
-            print(f"round skipped: {e}")
-            if args.once:
+        failed = False
+        for group in groups:
+            gid = group_id_from_url(group["url"])
+            try:
+                posts = _fetch_with_retry(group, mon["pages_per_run"], mon.get("headless", True))
+            except SessionExpired:
+                print("session expired — run: python cli.py login")
                 return 1
-        else:
-            now = datetime.now(timezone.utc).isoformat()
-            upsert_posts(conn, gid, posts, now)
-            upsert_comments(conn, gid, posts, now)
-            ok = sum(len(p.get("comments") or []) for p in posts)
-            failed = sum(p.get("comments_seen") or 0 for p in posts) - ok
-            print(f"[{now}] fetched {len(posts)} posts for {group['name']}")
-            print(f"[{now}] comments: {ok} parsed / {failed} failed")
-            provider = get_provider()
-            if provider is not None:
-                pending = pending_sentiment(conn, gid)
-                for row in pending:
-                    save_sentiment(conn, gid, row["post_id"], analyze_text(row["body"], provider))
-                if pending:
-                    print(f"[{now}] analyzed {len(pending)} posts")
-            n = check_alerts(conn, gid, group["name"], cfg)
-            if n:
-                print(f"[{now}] alerts: {n} sent")
-            if args.once:
-                return 0
+            except Exception as e:  # noqa: BLE001 — retry พังด้วย → ข้ามกลุ่มนี้ (spec §9)
+                print(f"round skipped for {group['name']}: {e}")
+                failed = True
+            else:
+                now = datetime.now(timezone.utc).isoformat()
+                upsert_posts(conn, gid, posts, now)
+                upsert_comments(conn, gid, posts, now)
+                ok = sum(len(p.get("comments") or []) for p in posts)
+                failed_c = sum(p.get("comments_seen") or 0 for p in posts) - ok
+                print(f"[{now}] fetched {len(posts)} posts for {group['name']}")
+                print(f"[{now}] comments: {ok} parsed / {failed_c} failed")
+                provider = get_provider()
+                if provider is not None:
+                    pending = pending_sentiment(conn, gid)
+                    for row in pending:
+                        save_sentiment(conn, gid, row["post_id"], analyze_text(row["body"], provider))
+                    if pending:
+                        print(f"[{now}] analyzed {len(pending)} posts")
+                n = check_alerts(conn, gid, group["name"], cfg)
+                if n:
+                    print(f"[{now}] alerts: {n} sent")
+        if args.once:
+            return 1 if failed else 0
         time.sleep(mon["interval_minutes"] * 60)
 
 def cmd_digest(cfg: dict, args) -> int:
-    group = cfg["groups"][0]
     conn = init_db(DB)
     since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
-    rows = fetch_recent(conn, group_id_from_url(group["url"]), since)
     d = cfg["digest"]
     words = cfg.get("watch", {}).get("words", [])  # ไม่มี [watch] = ปิด feature
-    md = build_digest(rows, args.days, d["top_n_keywords"], d["top_n_posts"], words)
-    out = Path("reports") / f"{group['name']}-{datetime.now():%Y-%m-%d}.md"
-    out.parent.mkdir(exist_ok=True)
-    out.write_text(md, encoding="utf-8")
-    print(md)
-    print(f"\nsaved {out}")
+    for group in cfg["groups"]:
+        rows = fetch_recent(conn, group_id_from_url(group["url"]), since)
+        md = build_digest(rows, args.days, d["top_n_keywords"], d["top_n_posts"], words)
+        out = Path("reports") / f"{group['name']}-{datetime.now():%Y-%m-%d}.md"
+        out.parent.mkdir(exist_ok=True)
+        out.write_text(md, encoding="utf-8")
+        print(md)
+        print(f"\nsaved {out}")
     return 0
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     cap.add_argument("--group", required=True)
     cap.add_argument("--out", default="data/sample.html")
 
+    sys.stdout.reconfigure(errors="replace")  # console cp874 + ตัวอักษรแปลกในโพสต์ = print พังไม่คุ้ม
     args = p.parse_args(argv)
     cfg = _config()
     if args.cmd == "login":

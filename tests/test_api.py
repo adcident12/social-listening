@@ -144,10 +144,15 @@ def test_stats_tolerates_null_keywords():
 
 def test_stats_default_group_and_zero_state():
     # ไม่ส่ง group_id → groups[0] จาก config.toml (รันจาก repo root เท่านั้น)
-    d = client.get("/stats").json()
-    assert d["group"] == "กลุ่มเป้าหมาย"
-    assert d["total_posts"] == 0  # temp DB ไม่มีโพสต์ของ group นี้ → zero state
-    assert d["top_keywords"] == []
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("default-group", "999-no-posts")])
+    try:
+        d = client.get("/stats").json()
+        assert d["group"] == "default-group"
+        assert d["total_posts"] == 0  # temp DB ไม่มีโพสต์ของ group นี้ → zero state
+        assert d["top_keywords"] == []
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
 
 
 CONFIG_PATH = Path("config.toml")

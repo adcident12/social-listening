@@ -1,6 +1,10 @@
 [[groups]]
-name = "กลุ่มเป้าหมาย"
-url  = "https://www.facebook.com/groups/1745892855948687"
+name = "OMSK PC MARKET"
+url  = "https://www.facebook.com/groups/791806120973629/"
+
+[[groups]]
+name = "Extreme IT"
+url  = "https://www.facebook.com/groups/2371881352829083/"
 
 [monitor]
 interval_minutes = 30

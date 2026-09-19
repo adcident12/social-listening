@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     post_id TEXT NOT NULL,
     rule TEXT NOT NULL,
     fired_at TEXT NOT NULL,
+    group_id TEXT,
     UNIQUE (post_id, rule)
 );
 """
@@ -51,6 +52,10 @@ CREATE TABLE IF NOT EXISTS alerts (
 def init_db(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.executescript(_SCHEMA)
+    acols = {c[1] for c in conn.execute("PRAGMA table_info(alerts)")}
+    if "group_id" not in acols:
+        conn.execute("ALTER TABLE alerts ADD COLUMN group_id TEXT")
+        conn.commit()
     cols = {c[1] for c in conn.execute("PRAGMA table_info(posts)")}
     # ponytail: migration ทีละคอลัมน์, ใช้ CREATE ใหม่ถ้า schema เปลี่ยนมาก
     for col, ddl in (("share_count", "ALTER TABLE posts ADD COLUMN share_count INTEGER DEFAULT 0"),

@@ -72,6 +72,20 @@ def test_init_db_migrates_old_posts_table(tmp_path):
     assert conn.execute("SELECT body FROM posts WHERE post_id='p1'").fetchone()[0] == "hi"
 
 
+def test_init_db_migrates_old_alerts_table(tmp_path):
+    db = tmp_path / "old.db"
+    old = sqlite3.connect(str(db))
+    old.execute("""CREATE TABLE alerts (post_id TEXT NOT NULL, rule TEXT NOT NULL,
+        fired_at TEXT NOT NULL, UNIQUE (post_id, rule))""")
+    old.execute("INSERT INTO alerts VALUES ('n1','negative','2026-09-19T00:00:00+00:00')")
+    old.commit()
+    old.close()
+    conn = init_db(db)  # ต้อง migrate ไม่ crash
+    cols = {c[1] for c in conn.execute("PRAGMA table_info(alerts)")}
+    assert "group_id" in cols
+    assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 1  # row เก่ายังอยู่ (group_id = NULL)
+
+
 def test_upsert_comments(tmp_path):
     conn = init_db(tmp_path / "t.db")
     upsert_posts(conn, "g1", _posts(), "2026-09-15T00:00:00+00:00")

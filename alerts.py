@@ -62,9 +62,9 @@ def check_alerts(conn, gid: str, group_name: str, cfg: dict) -> int:
     if not al.get("enabled") or not url:
         return 0
     now = datetime.now(timezone.utc)
-    last = conn.execute("SELECT MAX(fired_at) FROM alerts").fetchone()[0]
+    last = conn.execute("SELECT MAX(fired_at) FROM alerts WHERE group_id=?", (gid,)).fetchone()[0]
     if last and now - datetime.fromisoformat(last) < timedelta(minutes=al.get("cooldown_minutes", 60)):
-        return 0  # global cooldown — 1 query, ไม่ใช้ timer state
+        return 0  # cooldown ต่อกลุ่ม — 1 query, ไม่ใช้ timer state
     words = (cfg.get("watch") or {}).get("words", [])
     sent = 0
     for row, rule in evaluate_rules(fetch_recent(conn, gid, "1970-01-01T00:00:00+00:00"), al, words):
@@ -74,8 +74,8 @@ def check_alerts(conn, gid: str, group_name: str, cfg: dict) -> int:
         payload = discord_payload(group_name, row, rule, words)
         if not _post(url, payload) and not _post(url, payload):
             continue  # ponytail: ไม่ queue/backoff — 429/พัง = retry รอบหน้า (row ยังไม่ log)
-        conn.execute("INSERT INTO alerts (post_id, rule, fired_at) VALUES (?,?,?)",
-                     (row["post_id"], rule, now.isoformat()))
+        conn.execute("INSERT INTO alerts (post_id, rule, fired_at, group_id) VALUES (?,?,?,?)",
+                     (row["post_id"], rule, now.isoformat(), gid))
         sent += 1
     conn.commit()
     return sent

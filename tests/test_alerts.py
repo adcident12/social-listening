@@ -85,11 +85,27 @@ def test_check_alerts_cooldown_skips(tmp_path, monkeypatch):
     conn = _seeded_conn(tmp_path)
     sent = []
     monkeypatch.setattr(alerts, "_post", lambda url, payload: sent.append(1) or True)
-    conn.execute("INSERT INTO alerts VALUES ('n1','negative',?)",
+    conn.execute("INSERT INTO alerts (post_id, rule, fired_at, group_id)"
+                 " VALUES ('n1','negative',?,'g1')",
                  (datetime.now(timezone.utc).isoformat(),))
     conn.commit()
     assert alerts.check_alerts(conn, "g1", "กลุ่ม", _cfg()) == 0
     assert not sent
+
+
+def test_check_alerts_cooldown_is_per_group(tmp_path, monkeypatch):
+    conn = _seeded_conn(tmp_path)
+    upsert_posts(conn, "g2", [
+        {"post_id": "n2", "poster_name": "D", "body": "บริการแย่มากอีกกลุ่ม",
+         "created_at": "2026-09-19T04:00:00+00:00",
+         "reaction_count": 1, "comment_count": 0, "permalink": "https://x/n2"},
+    ], "2026-09-19T05:00:00+00:00")
+    conn.execute("UPDATE posts SET sentiment='negative' WHERE post_id='n2'")
+    conn.commit()
+    monkeypatch.setattr(alerts, "_post", lambda url, payload: True)
+    assert alerts.check_alerts(conn, "g1", "กลุ่ม1", _cfg()) == 3
+    assert alerts.check_alerts(conn, "g2", "กลุ่ม2", _cfg()) == 1  # g1 ยิงแล้ว — g2 ต้องไม่โดนปิดเสียง
+    assert alerts.check_alerts(conn, "g2", "กลุ่ม2", _cfg()) == 0  # dedup + cooldown ของ g2 เอง
 
 
 def test_discord_payload_embed_shape():

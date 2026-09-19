@@ -8,7 +8,7 @@ from pathlib import Path
 
 from digest import build_digest
 from fetch import SessionExpired, capture_feed_html, fetch_group_posts, group_id_from_url, login
-from sentiment import analyze_text, get_provider
+from sentiment import analyze_text, get_provider, load_dotenv
 from store import fetch_recent, init_db, pending_sentiment, save_sentiment, upsert_comments, upsert_posts
 
 DATA = Path("data")
@@ -81,6 +81,7 @@ def cmd_digest(cfg: dict, args) -> int:
     return 0
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv()  # entrypoint — ก่อน get_provider() ทุก path (real env ชนะ .env เสมอ)
     p = argparse.ArgumentParser(prog="social-listening")
     sub = p.add_subparsers(dest="cmd", required=True)
 

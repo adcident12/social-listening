@@ -4,6 +4,7 @@ import json
 import os
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 # Provider-agnostic sentiment seam — เลือก active provider ผ่าน SENTIMENT_PROVIDER (.env).
 # HTTP จริงแล้ว (stdlib urllib) — ใช้เมื่อ creds ครบ, analyze_text degrade เป็น NULL ถ้าดับ
@@ -107,6 +108,20 @@ class AnthropicProvider(SentimentProvider):
                           {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}, body)
         content = "".join(block.get("text", "") for block in resp.get("content", []))
         return _result(content, self.model)
+
+
+def load_dotenv(path: str = ".env") -> None:
+    """reads KEY=VALUE from .env — setdefault เท่านั้น (os.environ ที่มีอยู่แล้วชนะเสมอ)
+    ไม่มีไฟล์ = skip เงียบ · ไม่ print ค่า (อาจเป็น secret)"""
+    p = Path(path)
+    if not p.exists():
+        return
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip())
 
 
 def get_provider() -> SentimentProvider | None:

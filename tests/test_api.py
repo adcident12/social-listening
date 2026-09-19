@@ -8,7 +8,8 @@ os.environ["SL_DB"] = tempfile.mktemp(suffix=".db")
 
 import api  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from store import init_db, upsert_posts  # noqa: E402
+from sentiment import SentimentResult  # noqa: E402
+from store import init_db, save_sentiment, upsert_posts  # noqa: E402
 
 GID = "123"  # ไม่อยู่ใน config.toml — _group_info fallback ใช้ตามนั้น
 
@@ -204,6 +205,35 @@ def test_stats_top_posters_ranked_by_avg_engagement():
     # KOL โพสต์น้อยแต่ engagement ต่อโพสต์สูงกว่า Y (โพสต์เยอะ) → เรียงอันดับตาม influence
     assert d["top_posters"][0] == {"name": "KOL", "count": 1, "avg_engagement": 50.0}
     assert d["top_posters"][1] == {"name": "Y", "count": 2, "avg_engagement": 1.0}
+
+
+def test_stats_sentiment_breakdown():
+    conn = init_db(api.DB)
+    upsert_posts(conn, "888", [
+        _post("s1", "ของดี คุ้มราคา", _ts(50)),
+        _post("s2", "แย่มาก ไม่แนะนำ", _ts(60)),
+        _post("s3", "โพสต์กลาง ๆ", _ts(70)),
+    ], FETCHED_AT)
+    save_sentiment(conn, "888", "s1", SentimentResult("positive", "ชมสินค้า", "product", "m", "1"))
+    save_sentiment(conn, "888", "s2", SentimentResult("negative", "บ่นเรื่องสินค้า", "product", "m", "1"))
+    conn.commit()
+    d = client.get("/stats", params={"group_id": "888", "days": 7}).json()
+    assert d["sentiment"] == [
+        {"label": "positive", "count": 1, "pct": 1 / 3},
+        {"label": "neutral", "count": 0, "pct": 0.0},
+        {"label": "negative", "count": 1, "pct": 1 / 3},
+        {"label": "unanalyzed", "count": 1, "pct": 1 / 3},
+    ]
+    p = client.get("/posts/s1", params={"group_id": "888"}).json()
+    assert p["sentiment"] == "positive"
+    assert p["summary"] == "ชมสินค้า"
+    # total=0 (ทุกโพสต์อยู่นอก 1 วัน) → 4 entries หมด count/pct = 0 ไม่ crash
+    d0 = client.get("/stats", params={"group_id": "888", "days": 1}).json()
+    assert d0["total_posts"] == 0
+    assert d0["sentiment"] == [
+        {"label": lab, "count": 0, "pct": 0.0}
+        for lab in ("positive", "neutral", "negative", "unanalyzed")
+    ]
 
 
 TL_GID = "666"

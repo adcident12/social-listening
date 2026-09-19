@@ -7,6 +7,13 @@ import { timeAgo } from "@/lib/format";
 
 const DAYS = [7, 14, 30] as const;
 
+const SENTIMENT_STYLE: Record<string, { cls: string; label: string }> = {
+  positive: { cls: "bg-emerald-100 text-emerald-800", label: "บวก" },
+  neutral: { cls: "bg-neutral-100 text-neutral-700", label: "กลาง" },
+  negative: { cls: "bg-red-100 text-red-800", label: "ลบ" },
+  unanalyzed: { cls: "bg-amber-100 text-amber-800", label: "ยังไม่ได้วิเคราะห์" },
+};
+
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-4">
@@ -34,6 +41,7 @@ export default function Trends() {
   const max = data.top_keywords[0]?.count ?? 1;
   const topKw = data.top_keywords[0];
   const topPoster = data.top_posters[0];
+  const sentiment = data.sentiment.filter((s) => s.count > 0);
   return (
     <div className="space-y-6">
       {error && (
@@ -79,6 +87,26 @@ export default function Trends() {
           value={topPoster?.name ?? "—"}
           sub={topPoster ? `${topPoster.count} โพสต์` : undefined}
         />
+      </section>
+      <section className="rounded-xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-4 text-lg font-semibold">Sentiment</h2>
+        {sentiment.length === 0 ? (
+          <p className="text-sm text-neutral-500">ยังไม่มีโพสต์ใน range นี้</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {sentiment.map((s) => {
+              const style = SENTIMENT_STYLE[s.label];
+              return (
+                <span
+                  key={s.label}
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${style?.cls ?? "bg-neutral-100 text-neutral-700"}`}
+                >
+                  {style?.label ?? s.label} {s.count}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </section>
       <section className="rounded-xl border border-neutral-200 bg-white p-5">
         <h2 className="mb-4 text-lg font-semibold">Top keywords</h2>

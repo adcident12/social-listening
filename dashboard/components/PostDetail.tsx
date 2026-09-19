@@ -5,6 +5,12 @@ import { type Post } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
 import { timeAgo, fullDateTime } from "@/lib/format";
 
+const SENTIMENT: Record<string, { cls: string; label: string }> = {
+  positive: { cls: "bg-emerald-100 text-emerald-800", label: "บวก" },
+  neutral: { cls: "bg-neutral-100 text-neutral-700", label: "กลาง" },
+  negative: { cls: "bg-red-100 text-red-800", label: "ลบ" },
+};
+
 export default function PostDetail() {
   const { id } = useParams<{ id: string }>();
   const { data, error } = usePoll<Post>(`/posts/${encodeURIComponent(id)}`);
@@ -40,9 +46,22 @@ export default function PostDetail() {
             </p>
           </div>
         </header>
+        {data.sentiment && SENTIMENT[data.sentiment] && (
+          <span
+            className={`mt-3 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${SENTIMENT[data.sentiment].cls}`}
+          >
+            {SENTIMENT[data.sentiment].label}
+          </span>
+        )}
         <p className="mt-4 whitespace-pre-wrap leading-relaxed">
           {data.body ?? "(ไม่มีข้อความ)"}
         </p>
+        {data.summary && (
+          <div className="mt-4 border border-neutral-200 bg-neutral-50 p-3 text-sm">
+            <span className="font-medium text-neutral-500">สรุปโดย AI: </span>
+            <span className="text-neutral-700">{data.summary}</span>
+          </div>
+        )}
         {data.keywords.length > 0 && (
           <div className="mt-4 flex flex-wrap gap-1.5">
             {data.keywords.map((k) => (

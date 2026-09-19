@@ -108,6 +108,8 @@ def _row_to_post(r) -> dict:
         "share_count": r["share_count"] or 0,
         "permalink": r["permalink"],
         "keywords": json.loads(r["keywords"]) if r["keywords"] else [],
+        "sentiment": r["sentiment"],
+        "summary": r["summary"],
     }
 
 
@@ -182,9 +184,11 @@ def stats(days: int = Query(7, ge=1, le=90), group_id: str | None = None):
         last = conn.execute("SELECT MAX(fetched_at) FROM posts").fetchone()[0]
     # fetch_recent return list[dict] — r["col"] ได้เลย
     kw: Counter = Counter()
+    sent: Counter = Counter()
     for r in rows:
         if r["keywords"]:  # NULL (row ก่อน migration) = skip
             kw.update(json.loads(r["keywords"]))
+        sent[r["sentiment"] or "unanalyzed"] += 1  # NULL = ยังไม่ได้วิเคราะห์
     total = len(rows)
     return {
         "group": name,
@@ -192,6 +196,12 @@ def stats(days: int = Query(7, ge=1, le=90), group_id: str | None = None):
         "total_posts": total,
         "new_since_yesterday": new24,
         "last_fetched": last,
+        "sentiment": [
+            # 4 entries เสมอ — total=0 (window ว่าง) → count/pct 0 ทั้งหมด ไม่ crash
+            {"label": lab, "count": sent[lab],
+             "pct": sent[lab] / total if total else 0.0}
+            for lab in ("positive", "neutral", "negative", "unanalyzed")
+        ],
         "top_keywords": [
             {"word": w, "count": c, "pct": c / total} for w, c in kw.most_common(15)
         ],

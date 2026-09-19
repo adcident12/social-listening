@@ -12,6 +12,8 @@ export type Post = {
   share_count: number;
   permalink: string | null;
   keywords: string[];
+  sentiment: string | null;
+  summary: string | null;
 };
 
 export type Stats = {
@@ -20,6 +22,7 @@ export type Stats = {
   total_posts: number;
   new_since_yesterday: number;
   last_fetched: string | null;
+  sentiment: { label: string; count: number; pct: number }[];
   top_keywords: { word: string; count: number; pct: number }[];
   top_posters: { name: string; count: number }[];
   top_posts: {

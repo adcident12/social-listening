@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { type Post } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
 import { timeAgo, fullDateTime } from "@/lib/format";
@@ -13,7 +13,11 @@ const SENTIMENT: Record<string, { cls: string; label: string }> = {
 
 export default function PostDetail() {
   const { id } = useParams<{ id: string }>();
-  const { data, error } = usePoll<Post>(`/posts/${encodeURIComponent(id)}`);
+  const searchParams = useSearchParams();
+  const gid = searchParams.get("group_id");
+  const { data, error } = usePoll<Post>(
+    `/posts/${encodeURIComponent(id)}${gid ? `?group_id=${encodeURIComponent(gid)}` : ""}`,
+  );
 
   if (!data) {
     return (

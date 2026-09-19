@@ -293,6 +293,20 @@ def test_timeline_daily_buckets_bangkok():
     assert (d["buckets"][0]["posts"], d["buckets"][0]["top_keyword"]) == (0, None)
 
 
+def test_timeline_empty_keywords_no_crash():
+    # โพสต์ body ว่าง → keywords='[]' (truthy string) → Counter ว่าง — ห้าม IndexError
+    bkk_now = datetime.now(timezone.utc).astimezone(BKK)
+    today0 = bkk_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    conn = init_db(api.DB)
+    upsert_posts(conn, "667", [
+        _post("e1", "", (today0 + timedelta(hours=1)).isoformat()),
+    ], FETCHED_AT)
+    conn.commit()
+    d = client.get("/stats/timeline", params={"days": 3, "group_id": "667"}).json()
+    assert d["buckets"][-1]["posts"] == 1
+    assert d["buckets"][-1]["top_keyword"] is None
+
+
 # --- /summary — rule-based "สรุปวันนี้" (ทดสอบรันท้ายไฟล์: ใช้ DELETE FROM posts คุม DB ล้วน) ---
 
 SUM_GID = "777"

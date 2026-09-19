@@ -463,7 +463,8 @@ def stats_timeline(days: int = Query(30, ge=1, le=90), group_id: str | None = No
         if r["keywords"]:
             kw_by_day.setdefault(d, Counter()).update(json.loads(r["keywords"]))
     for d, c in kw_by_day.items():
-        buckets[d]["top_keyword"] = c.most_common(1)[0][0]
+        if c:
+            buckets[d]["top_keyword"] = c.most_common(1)[0][0]
     return {
         "group": name,
         "days": days,

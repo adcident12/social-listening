@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -11,19 +11,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  API,
-  type Group,
-  type GroupsResponse,
-  type TimelineBucket,
-  type TimelineResponse,
-} from "@/lib/api";
+import GroupSelect from "@/components/GroupSelect";
+import { type TimelineBucket, type TimelineResponse } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
+import { useGroupFilter } from "@/lib/useGroupFilter";
 
 const DAYS = [7, 14, 30, 60, 90] as const;
-
-const selectCls =
-  "rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100";
 
 function Tip({
   active,
@@ -49,22 +42,8 @@ function Tip({
 }
 
 export default function Timeline() {
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [picked, setPicked] = useState<string | null>(null);
   const [days, setDays] = useState(30);
-  const [groupsError, setGroupsError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch(`${API}/groups`, { cache: "no-store" })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<GroupsResponse>;
-      })
-      .then((d) => setGroups(d.groups))
-      .catch((e) => setGroupsError(String(e)));
-  }, []);
-
-  const gid = picked ?? groups[0]?.group_id ?? "";
+  const { groups, gid, setGroup, error: groupsError } = useGroupFilter();
 
   const { data, error, stale } = usePoll<TimelineResponse>(
     gid ? `/stats/timeline?days=${days}&group_id=${gid}` : "",
@@ -99,17 +78,7 @@ export default function Timeline() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">Timeline</h1>
         <div className="flex flex-wrap items-center gap-3">
-          <select
-            className={selectCls}
-            value={gid}
-            onChange={(e) => setPicked(e.target.value)}
-          >
-            {groups.map((g) => (
-              <option key={g.group_id} value={g.group_id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
+          <GroupSelect groups={groups} value={gid} onChange={setGroup} />
           <div className="flex rounded-lg border border-neutral-200 bg-white p-0.5">
             {DAYS.map((d) => (
               <button

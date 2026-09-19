@@ -1,8 +1,10 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
+import GroupSelect from "@/components/GroupSelect";
 import { API, type PostsResponse } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
+import { useGroupFilter } from "@/lib/useGroupFilter";
 import { timeAgo, fullDateTime } from "@/lib/format";
 
 const LIMIT = 50;
@@ -14,6 +16,7 @@ export default function PostList() {
   const [poster, setPoster] = useState("");
   const [sort, setSort] = useState<"date" | "engagement">("date");
   const [page, setPage] = useState(0);
+  const { groups, gid, setGroup } = useGroupFilter();
 
   const qs = new URLSearchParams({
     sort,
@@ -22,7 +25,8 @@ export default function PostList() {
   });
   if (q) qs.set("q", q);
   if (poster) qs.set("poster", poster);
-  const { data, error } = usePoll<PostsResponse>(`/posts?${qs}`);
+  if (gid) qs.set("group_id", gid);
+  const { data, error } = usePoll<PostsResponse>(gid ? `/posts?${qs}` : "");
 
   const posts = data?.posts ?? [];
   const eng = (p: { reaction_count: number; comment_count: number; share_count: number }) =>
@@ -47,6 +51,7 @@ export default function PostList() {
       )}
       <h1 className="text-2xl font-bold tracking-tight">Posts</h1>
       <div className="flex flex-wrap items-center gap-2">
+        <GroupSelect groups={groups} value={gid} onChange={setGroup} />
         <input
           className={`${inputCls} w-56`}
           placeholder="ค้นหาในข้อความ…"
@@ -125,7 +130,7 @@ export default function PostList() {
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Link
-                    href={`/posts/${p.post_id}`}
+                    href={`/posts/${p.post_id}?group_id=${encodeURIComponent(p.group_id)}`}
                     className="text-sm font-medium text-indigo-700 hover:underline"
                   >
                     ดู →

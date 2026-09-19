@@ -1,8 +1,10 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
+import GroupSelect from "@/components/GroupSelect";
 import { type Stats } from "@/lib/api";
 import { usePoll } from "@/lib/usePoll";
+import { useGroupFilter } from "@/lib/useGroupFilter";
 import { timeAgo } from "@/lib/format";
 
 const DAYS = [7, 14, 30] as const;
@@ -34,7 +36,10 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 
 export default function Trends() {
   const [days, setDays] = useState(7);
-  const { data, error } = usePoll<Stats>(`/stats?days=${days}`);
+  const { groups, gid, setGroup } = useGroupFilter();
+  const { data, error } = usePoll<Stats>(
+    gid ? `/stats?days=${days}&group_id=${gid}` : "",
+  );
 
   if (!data) {
     return (
@@ -69,20 +74,23 @@ export default function Trends() {
             {timeAgo(data.last_fetched)}
           </span>
         </div>
-        <div className="flex rounded-lg border border-neutral-200 bg-white p-0.5">
-          {DAYS.map((d) => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={
-                days === d
-                  ? "rounded-md bg-indigo-600 px-3 py-1 text-sm font-medium text-white"
-                  : "rounded-md px-3 py-1 text-sm text-neutral-500 transition-colors hover:text-neutral-900"
-              }
-            >
-              {d} วัน
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3">
+          <GroupSelect groups={groups} value={gid} onChange={setGroup} />
+          <div className="flex rounded-lg border border-neutral-200 bg-white p-0.5">
+            {DAYS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setDays(d)}
+                className={
+                  days === d
+                    ? "rounded-md bg-indigo-600 px-3 py-1 text-sm font-medium text-white"
+                    : "rounded-md px-3 py-1 text-sm text-neutral-500 transition-colors hover:text-neutral-900"
+                }
+              >
+                {d} วัน
+              </button>
+            ))}
+          </div>
         </div>
       </header>
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">

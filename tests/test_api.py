@@ -136,6 +136,19 @@ def _write_config(groups):
     CONFIG_PATH.write_text(text, encoding="utf-8")
 
 
+def test_groups_lists_config_order():
+    orig = CONFIG_PATH.read_text(encoding="utf-8")
+    _write_config([("g1", GID), ("g2", "456")])
+    try:
+        d = client.get("/groups").json()
+        assert d == {"groups": [
+            {"name": "g1", "group_id": GID},
+            {"name": "g2", "group_id": "456"},
+        ]}
+    finally:
+        CONFIG_PATH.write_text(orig, encoding="utf-8")
+
+
 def test_compare_all_groups_sov_and_sample_size():
     orig = CONFIG_PATH.read_text(encoding="utf-8")
     _write_config([("g1", GID), ("g2", "456"), ("g3-empty", "789")])

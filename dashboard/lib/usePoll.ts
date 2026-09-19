@@ -9,6 +9,7 @@ export function usePoll<T>(url: string, ms = 60_000) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!url) return; // url ยังไม่พร้อม (เช่น ยังไม่เลือก group) — skip poll
     let on = true;
     const load = () =>
       fetch(`${API}${url}`, { cache: "no-store" })

@@ -75,6 +75,11 @@ def _poster_influence(rows: list[dict]) -> list[tuple[str, int, float]]:
     return [(n, c, round(t / c, 2)) for n, (c, t) in ranked[:10]]
 
 
+@app.get("/groups")
+def groups():
+    return {"groups": [{"name": n, "group_id": g} for n, g in _all_groups()]}
+
+
 @contextmanager
 def _ro():
     # connection ใหม่ต่อ request (กัน cross-thread) · timeout=5 → DB busy = 503 (spec §7)

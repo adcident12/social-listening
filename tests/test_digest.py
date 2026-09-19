@@ -33,6 +33,32 @@ def test_empty_rows():
     md = build_digest([], 7, 5, 3)
     assert "(no posts in range)" in md
 
-def test_sentiment_placeholder_present():
+def test_sentiment_all_unanalyzed():
     md = build_digest(ROWS, 7, 5, 3)
-    assert "## Sentiment" in md
+    section = md.split("## Sentiment")[1].split("##")[0]
+    assert "ยังไม่ได้วิเคราะห์: 3 (100%)" in section
+    assert "## โพสต์ลบเด่น" not in md
+
+
+SENT_ROWS = [
+    {**ROWS[0], "sentiment": "positive", "summary": "ชมสินค้า"},
+    {**ROWS[1], "sentiment": "neutral"},
+    {**ROWS[2], "sentiment": "negative", "summary": "บ่นเรื่องโค้ด"},
+]
+
+
+def test_sentiment_breakdown():
+    md = build_digest(SENT_ROWS, 7, 5, 3)
+    section = md.split("## Sentiment")[1].split("##")[0]
+    assert "บวก: 1 (33%)" in section
+    assert "กลาง: 1 (33%)" in section
+    assert "ลบ: 1 (33%)" in section
+    assert "ยังไม่ได้วิเคราะห์: 0 (0%)" in section
+
+
+def test_notable_negative_section():
+    md = build_digest(SENT_ROWS, 7, 5, 3)
+    section = md.split("## โพสต์ลบเด่น")[1].split("##")[0]
+    line = [l for l in section.splitlines() if l.startswith("- ")][0]
+    assert "x/3" in line  # B post engagement 27 สูงสุด
+    assert "(สรุป: บ่นเรื่องโค้ด)" in line

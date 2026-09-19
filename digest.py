@@ -22,11 +22,22 @@ def _tokens(text: str) -> list[str]:
     ]
 
 
-def _line(r: dict) -> str:
-    eng = (r["reaction_count"] or 0) + (r["comment_count"] or 0) + (r.get("share_count") or 0)
+SENTIMENT_ORDER = [("positive", "บวก"), ("neutral", "กลาง"),
+                   ("negative", "ลบ"), ("unanalyzed", "ยังไม่ได้วิเคราะห์")]
+
+
+def _engagement(r: dict) -> int:
+    return (r["reaction_count"] or 0) + (r["comment_count"] or 0) + (r.get("share_count") or 0)
+
+
+def _line(r: dict, with_summary: bool = False) -> str:
+    eng = _engagement(r)
     snippet = " ".join((r["body"] or "").split())[:120]
-    return (f"- [{eng}] {r['created_at'] or '—'} — {r['poster_name']}: "
+    line = (f"- [{eng}] {r['created_at'] or '—'} — {r['poster_name']}: "
             f"{snippet} {r['permalink'] or ''}")
+    if with_summary and r.get("summary"):
+        line += f" (สรุป: {r['summary']})"
+    return line
 
 
 def build_digest(rows: list[dict], days: int,
@@ -50,15 +61,22 @@ def build_digest(rows: list[dict], days: int,
         lines.append(f"- {name}: {c}")
 
     lines += ["", "## Top posts by engagement"]
-    top = sorted(rows, key=lambda r: (r["reaction_count"] or 0) + (r["comment_count"] or 0)
-                 + (r.get("share_count") or 0),
-                 reverse=True)[:top_n_posts]
+    top = sorted(rows, key=_engagement, reverse=True)[:top_n_posts]
     lines += [_line(r) for r in top]
 
     lines += ["", "## Latest posts"]
     lines += [_line(r) for r in rows[:top_n_posts]]  # rows มาเรียง DESC แล้ว
 
-    # ponytail: placeholder ตัวเดียว — LLM sentiment มาใน Phase 2 (ยังไม่ fix format)
-    lines += ["", "## Sentiment", "(pending — LLM analysis, Phase 2)"]
+    sent: Counter = Counter(r.get("sentiment") or "unanalyzed" for r in rows)
+    lines += ["", "## Sentiment"]
+    for key, label in SENTIMENT_ORDER:
+        c = sent.get(key, 0)
+        lines.append(f"- {label}: {c} ({c / len(rows):.0%})")
+
+    negatives = [r for r in rows if r.get("sentiment") == "negative"]
+    if negatives:
+        lines += ["", "## โพสต์ลบเด่น"]
+        lines += [_line(r, with_summary=True) for r in
+                  sorted(negatives, key=_engagement, reverse=True)[:top_n_posts]]
 
     return "\n".join(lines)

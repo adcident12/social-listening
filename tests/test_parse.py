@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fetch import normalize_time, parse_posts
+from fetch import _parse_comment_teaser, normalize_time, parse_posts
 
 FIXTURE = """
 <html><body>
@@ -9,7 +9,7 @@ FIXTURE = """
   <span>ใครลองโปรตีนชากสูตรใหม่ยัง อร่อยดี</span>
   <a href="https://www.facebook.com/groups/123/posts/99/?comment_id=1"></a>
   <span>ความรู้สึกทั้งหมด 117 6 2 ถูกใจ แสดงความคิดเห็น แชร์</span>
-  <span>ดูความคิดเห็นเพิ่มเติม Nattapon Yongpaiboon ตัวเลขเกิดขึ้นจริงครับ 8 ชั่วโมง 2 ดู</span>
+  <span>ดูความคิดเห็นเพิ่มเติม Nattapon Yongpaiboon · 8 ชั่วโมง ตัวเลขเกิดขึ้นจริงครับ 2 ดู</span>
 </div>
 <div role="article" aria-label="โพสต์โดย Bob ใน Test Group.">
   <div>เมื่อวานนี้</div>
@@ -106,11 +106,28 @@ def test_comment_teaser_parsed():
     assert a["comments_seen"] == 1
     assert len(a["comments"]) == 1
     c = a["comments"][0]
-    assert c["poster_name"] is None  # flat text — no DOM to split name from body
-    assert c["body"].startswith("Nattapon Yongpaiboon")  # name glued to body
+    assert c["poster_name"] == "Nattapon Yongpaiboon"
+    assert c["body"] == "ตัวเลขเกิดขึ้นจริงครับ"
     assert c["reaction_count"] == 2  # trailing "N ดู" = comment reactions
     assert c["created_at"] is not None  # comment time
     assert "Nattapon" not in a["body"]  # teaser must not leak into post body
+
+def test_comment_teaser_multi_comment():
+    now = datetime(2026, 9, 18, 7, 0, tzinfo=timezone.utc)
+    seg = ("ดูความคิดเห็นเพิ่มเติม "
+           "Nattapon Yongpaiboon · 15 ชั่วโมง สวัสดีครับ "
+           "ตอบกลับ แชร์ ดูการตอบกลับ 1 รายการ "
+           "สมชาย ใจดี · 2 ชั่วโมง เป็นประโยชน์มากครับ "
+           "ตอบกลับ แชร์ ดูการตอบกลับ 1 รายการ 3 ดู")
+    seen, comments = _parse_comment_teaser(seg, now=now)
+    assert seen == 2
+    assert comments[0]["poster_name"] == "Nattapon Yongpaiboon"
+    assert comments[0]["created_at"] == "2026-09-17T16:00:00+00:00"
+    assert comments[0]["body"] == "สวัสดีครับ"
+    assert comments[1]["poster_name"] == "สมชาย ใจดี"
+    assert comments[1]["created_at"] == "2026-09-18T05:00:00+00:00"
+    assert comments[1]["body"] == "เป็นประโยชน์มากครับ"
+    assert comments[1]["reaction_count"] == 3  # trailing "N ดู" → comment สุดท้าย
 
 def test_posts_without_teaser_have_no_comments():
     posts = parse_posts(FIXTURE, "123")

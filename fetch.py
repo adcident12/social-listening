@@ -128,6 +128,20 @@ POST_LINE_RE = re.compile(r"^(?P<poster>[^·]+?)\s*·\s*(?P<time>[^·]+?)\s*·\s
 BADGE_RE = re.compile(
     r"\s*(ผู้ดูแล|ผู้เขียน|ผู้ก่อตั้ง|ผู้มีส่วนร่วมดาวเด่น|Member|Owner|Admin|Author)(,.*)?$")
 LOADING_RE = re.compile(r"กำลังโหลด|Loading")
+# comment teaser chrome (DOM-verified, calibrate 2026-09-18): "ตอบกลับ แชร์ [แก้ไขแล้ว] [ดูการตอบกลับ N รายการ]"
+# แชร์ = U+0E4C (DOM typo ของ U+0E49) — อย่า "แก้" ให้ถูก
+TEASER_CHROME_REPLY = "\u0e15\u0e2d\u0e1a\u0e01\u0e25\u0e31\u0e1a"  # ตอบกลับ
+TEASER_CHROME_SHARE = "\u0e41\u0e0a\u0e23\u0e4c"  # แชร์ (DOM typo U+0E4C)
+TEASER_CHROME_EDIT = "\u0e41\u0e01\u0e49\u0e44\u0e02\u0e41\u0e25\u0e49\u0e27"  # แก้ไขแล้ว (บางคอมเมนต์)
+TEASER_CHROME_DU = "\u0e14\u0e39"  # ดู — prefix ของ "ดูการตอบกลับ"
+TEASER_CHROME_RE = re.compile(
+    TEASER_CHROME_REPLY + r"[\s\u00b7\u2022]+" + TEASER_CHROME_SHARE
+    + r"(?:[\s\u00b7\u2022]+" + TEASER_CHROME_EDIT + r")?"
+    + r"(?:[\s\u00b7\u2022]+" + TEASER_CHROME_DU + r"\S*" + TEASER_CHROME_REPLY  # \S* = การตอบกลับ
+    + r"[\s\u00b7\u2022]+\d+[\s\u00b7\u2022]+\S+)?")  # \S+ = รายการ
+TEASER_FOLLOW = "\u0e15\u0e34\u0e14\u0e15\u0e32\u0e21"  # ติดตาม
+TEASER_BADGE_PREFIX_RE = re.compile(
+    r"^(?:%s)\s*" % BADGE_RE.pattern.partition("(")[2].split(")(", 1)[0])
 
 _MONTHS_EN = {m: i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -283,10 +297,10 @@ def _first_time(text: str) -> str | None:
     return None
 
 
-def _parse_comment_teaser(text: str) -> tuple[int, list[dict]]:
-    """(comments_seen, comments) — teaser เป็นข้อความท้ายโพสต์ใน flat text
-    flat text แยกชื่อ/body ไม่ได้ → poster_name None, ชื่อติดหน้า body
-    ponytail: assume teaser เป็น segment สุดท้าย, recalibrate บน capture จริงแรก"""
+def _parse_comment_teaser(text: str, now: datetime | None = None) -> tuple[int, list[dict]]:
+    """(comments_seen, comments) — teaser = preview คอมเมนต์ท้ายโพสต์ใน flat text
+    DOM (calibrate 2026-09-18): คอมเมนต์ = "ชื่อ [badge] · เวลา · body" ตามด้วย chrome "ตอบกลับ แชร์…"
+    block k = [chrome ก่อนหน้าจบ : chrome ตัวนี้เริ่ม]; ท้ายสุดหลัง chrome สุดท้าย = input box — โยน"""
     i = text.find(TEASER_MARKER)
     if i < 0:
         return 0, []
@@ -297,27 +311,44 @@ def _parse_comment_teaser(text: str) -> tuple[int, list[dict]]:
         reactions = int(m.group(1))
     else:
         reactions = 0
-    time_label = None
-    words = seg.split()
-    for n in range(min(4, len(words)), 0, -1):
-        for j in range(len(words), n - 1, -1):
-            cand = " ".join(words[j - n:j])
-            if normalize_time(cand):
-                time_label = cand
+    blocks, start = [], 0
+    for cm in TEASER_CHROME_RE.finditer(seg):
+        blocks.append(seg[start:cm.start()])
+        start = cm.end()
+    if not blocks:
+        blocks = [seg]
+    comments = []
+    for block in blocks:
+        ms = list(SEE_MORE_RE.finditer(block))
+        if ms:
+            block = block[:ms[-1].start()]  # chip "ดูเพิ่่มเติม" ท้าย body
+        parts = [p for p in (x.strip() for x in re.split(r"[\u00b7\u2022]", block)) if p]
+        if len(parts) < 2:
+            continue
+        name = parts[0]
+        rest = TEASER_BADGE_PREFIX_RE.sub("", parts[1], count=1).strip()
+        created_at = None
+        words = rest.split()
+        for n in range(min(4, len(words)), 0, -1):  # เวลาอยู่หน้า body — ลองยาวสุดก่อน
+            cand = " ".join(words[:n])
+            if normalize_time(cand, now):
+                created_at = normalize_time(cand, now)
+                rest = " ".join(words[n:]).strip()
                 break
-        if time_label:
-            break
-    if time_label:
-        seg = seg.rsplit(time_label, 1)[0]  # rightmost = เวลาของคอมเมนต์
-    body = " ".join(seg.split()).strip(" ,.")
-    if not body:
-        return 1, []  # มี marker แต่ตีความไม่ได้ — นับเป็น parse failed
-    return 1, [{
-        "poster_name": None,
-        "body": body,
-        "created_at": normalize_time(time_label) if time_label else None,
-        "reaction_count": reactions,
-    }]
+        extra = [TEASER_BADGE_PREFIX_RE.sub("", p, count=1).strip() for p in parts[2:]]
+        extra = [p for p in extra if p and p != TEASER_FOLLOW]
+        body = " ".join([rest] + extra).strip(" ,.")
+        if not body:
+            continue
+        comments.append({
+            "poster_name": name,
+            "body": body,
+            "created_at": created_at,
+            "reaction_count": 0,
+        })
+    if reactions and comments:
+        comments[-1]["reaction_count"] = reactions
+    return len(comments), comments
 
 
 def _clean_body(text: str, poster: str | None, time_label: str | None) -> str:
